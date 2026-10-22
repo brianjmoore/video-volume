@@ -87,7 +87,7 @@
   <section>
     <h3>Render</h3>
     <div class="segLabel">Mode</div>
-    <div class="seg" data-key="mode"><button data-v="0">Volume</button><button data-v="1">Max intensity</button></div>
+    <div class="seg" data-key="mode"><button data-v="0">Volume</button><button data-v="1">Max intensity</button><button data-v="2">Jello</button></div>
     <div class="segLabel">Opacity from</div>
     <div class="seg" data-key="alphaSrc"><button data-v="2">Motion</button><button data-v="0">Bright</button><button data-v="1">Dark</button><button data-v="3">Uniform</button></div>
     <div class="segLabel">Color</div>
@@ -99,6 +99,17 @@
     <div class="ctl"><label>Time length</label><input type="range" data-key="depthScale" min="0.2" max="4" step="0.01"><output></output></div>
     <div class="ctl"><label>Quality</label><input type="range" data-key="steps" min="32" max="512" step="8"><output></output></div>
     <div class="ctl"><label>Resolution</label><input type="range" data-key="res" min="0.25" max="1" step="0.05"><output></output></div>
+  </section>
+
+  <section id="jelloSec" hidden>
+    <h3>Jello</h3>
+    <div class="segLabel">Video content</div>
+    <div class="seg" data-key="dye"><button data-v="0">Solid</button><button data-v="1">Dyed gel</button></div>
+    <div class="segLabel">Gel</div>
+    <div class="seg" data-key="gel"><button data-v="0">Clear</button><button data-v="1">Cherry</button><button data-v="2">Lime</button><button data-v="3">Blue</button></div>
+    <div class="ctl"><label>Wobbliness</label><input type="range" data-key="jiggle" min="0" max="1" step="0.01"><output></output></div>
+    <div class="ctl"><label>Refraction</label><input type="range" data-key="ior" min="1" max="1.6" step="0.01"><output></output></div>
+    <div class="row"><button id="wobble">Wobble</button></div>
   </section>
 
   <section>
@@ -129,11 +140,17 @@ const state = {
   threshold: 0.12, soft: 0.25, density: 1, bright: 1, depthScale: 1.4,
   steps: coarse ? 160 : 256, res: 1,
   planeMode: 0, theta: 180, phi: 0, offset: -1, ghost: 0.15,
+  gel: 1, jiggle: 0.6, ior: 1.35, dye: 0,
 };
 let volume = null;          // { w, h, d, data, t0, t1, label }
 let gl, prog, vao, volTex, dummyTex, U = {}, maxTex3D = 256;
 let interacting = false, interactTimer = 0, sweeping = false, sweepDir = 1, lastSweepT = 0;
 let needsRender = false;
+// Jello wobble: damped springs for shear x, shear z, squash and twist.
+const wob = { x: [0, 0, 0, 0], v: [0, 0, 0, 0] };
+const WOB_FREQ = [2.5, 2.5, 3.8, 2.2], WOB_MAX = [0.22, 0.22, 0.3, 0.35];
+const GELS = [[0.08, 0.06, 0.04], [0.25, 2.6, 2.2], [1.6, 0.25, 2.4], [2.4, 1.1, 0.25]];
+let wobbling = false, lastWobT = 0;
 
 // ---------------------------------------------------------------- shaders
 const VS = `#version 300 es
@@ -149,14 +166,20 @@ uniform vec3 uCamPos, uCamRight, uCamUp, uCamFwd, uHalf, uNormal;
 uniform vec2 uTan, uShift;
 uniform int uMode, uAlphaSrc, uColorMode, uPlaneMode, uSteps, uHasVol;
 uniform float uThresh, uSoft, uDensity, uBright, uOffset, uGhost, uPixel;
+uniform vec4 uWob;        // jello deformation: shear x, shear z, squash, twist
+uniform vec3 uGelSigma;   // gel absorption per unit length
+uniform float uIor;
+uniform int uDye;         // 1: voxels tint the light passing through them instead of blocking it
 
 const vec3 LUMA = vec3(0.299, 0.587, 0.114);
 const vec3 ACCENT = vec3(1.0, 0.75, 0.24);
+const vec3 KEY = vec3(-0.4784, 0.7654, 0.4305);   // key light direction (normalized)
+const vec3 FILL = vec3(0.7454, 0.2981, -0.5963);
 
-vec2 boxHit(vec3 ro, vec3 rd) {
+vec2 boxHit(vec3 ro, vec3 rd, vec3 h) {
   vec3 r = mix(rd, vec3(1e-6), lessThan(abs(rd), vec3(1e-6)));
   vec3 inv = 1.0 / r;
-  vec3 a = (-uHalf - ro) * inv, b = (uHalf - ro) * inv;
+  vec3 a = (-h - ro) * inv, b = (h - ro) * inv;
   vec3 lo = min(a, b), hi = max(a, b);
   return vec2(max(max(lo.x, lo.y), lo.z), min(min(hi.x, hi.y), hi.z));
 }
@@ -193,12 +216,130 @@ vec3 planeColor(vec3 p, float t) {
   return mix(c, ACCENT, 1.0 - smoothstep(0.4 * w, w, min(d.x, min(d.y, d.z))));
 }
 
+// ---- jello
+// World point -> rest-space point. Every deformation mode depends only on height, and the
+// squash maps height one-to-one, so this inverse is exact. The base stays put on the plate.
+vec3 unwarp(vec3 p) {
+  float hy = uHalf.y;
+  float y = -hy + (p.y + hy) / (1.0 + uWob.z);
+  float s = clamp((y + hy) / (2.0 * hy), 0.0, 1.0), k = s * s;
+  vec2 q = p.xz - uWob.xy * k;
+  float a = uWob.w * k, c = cos(a), sn = sin(a);
+  q = vec2(c * q.x - sn * q.y, sn * q.x + c * q.y);
+  q /= 1.0 - 0.5 * uWob.z * (0.3 + 0.7 * sin(3.14159 * s));   // bulge when squashed
+  return vec3(q.x, y, q.y);
+}
+float jelloSdf(vec3 p) {
+  vec3 r = unwarp(p);
+  const float rad = 0.04;
+  vec3 q = abs(r) - uHalf + rad;
+  float d = length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - rad;
+  if (uPlaneMode > 0) { vec3 nW = uNormal / uHalf; d = max(d, (uOffset - dot(nW, r)) / length(nW)); }
+  return d;
+}
+vec3 jelloNormal(vec3 p) {
+  const vec2 e = vec2(0.002, 0.0);
+  return normalize(vec3(jelloSdf(p + e.xyy) - jelloSdf(p - e.xyy),
+                        jelloSdf(p + e.yxy) - jelloSdf(p - e.yxy),
+                        jelloSdf(p + e.yyx) - jelloSdf(p - e.yyx)));
+}
+vec3 env(vec3 d) {
+  vec3 c = mix(vec3(0.03, 0.033, 0.04), vec3(0.2, 0.22, 0.26), smoothstep(-0.2, 0.9, d.y));
+  c += 1.8 * smoothstep(0.96, 0.985, dot(d, KEY));
+  c += vec3(0.5, 0.6, 0.8) * smoothstep(0.95, 0.98, dot(d, FILL));
+  return c;
+}
+vec3 bgDir(vec3 d) { return vec3(0.058, 0.063, 0.078) + 0.03 * d.y; }
+float sdBox2(vec2 p, vec2 b) { vec2 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0); }
+// The plate the jello sits on, or the background if the ray misses it.
+vec3 backdrop(vec3 ro, vec3 rd, vec3 bg) {
+  float yF = -uHalf.y - 0.002;
+  if (rd.y >= 0.0 || ro.y <= yF) return bg;
+  float t = (yF - ro.y) / rd.y;
+  vec3 p = ro + rd * t;
+  float R = 1.25 * length(uHalf.xz), r = length(p.xz), w = uPixel * t * 1.5;
+  float cover = 1.0 - smoothstep(R - w, R, r);
+  if (cover <= 0.0) return bg;
+  float u = r / R;
+  vec3 c = vec3(0.42, 0.42, 0.45) * (0.85 + 0.15 * (1.0 - u * u));
+  c += 0.1 * smoothstep(0.8, 0.9, u) * (1.0 - smoothstep(0.9, 1.0, u));   // rim
+  // Shadow from the key light, tinted by the gel it passes through.
+  vec2 off = KEY.xz / KEY.y * uHalf.y;
+  float fd = sdBox2(p.xz + off - uWob.xy * 0.5, uHalf.xz + abs(off) * 0.6);
+  vec3 through = exp(-uGelSigma * 2.0 * uHalf.y);
+  c *= mix(mix(vec3(0.3), through, 0.7), vec3(1.0), smoothstep(-0.1, 0.25, fd));
+  c *= 0.6 + 0.4 * smoothstep(0.0, 0.08, abs(sdBox2(p.xz, uHalf.xz)));   // contact darkening
+  return mix(bg, c, cover);
+}
+vec3 jello(vec3 ro, vec3 rd, vec3 bg, float jitter) {
+  vec3 behind = backdrop(ro, rd, bg);
+  float m = 0.05 + length(uWob.xy) + abs(uWob.w) * length(uHalf.xz) + abs(uWob.z) * (2.0 * uHalf.y + uHalf.x);
+  vec2 th = boxHit(ro, rd, uHalf + m);
+  if (th.x > th.y || th.y < 0.0) return behind;
+
+  // Sphere-trace the deformed surface (the warped SDF is not exact, so under-step).
+  float t = max(th.x, 0.0); bool hit = false;
+  for (int i = 0; i < 128; i++) {
+    float d = jelloSdf(ro + rd * t);
+    if (d < 1e-4 + uPixel * t * 0.3) { hit = true; break; }
+    t += d * 0.6;
+    if (t > th.y) break;
+  }
+  if (!hit) return behind;
+
+  vec3 p = ro + rd * t, n = jelloNormal(p);
+  float F = 0.03 + 0.97 * pow(1.0 - clamp(-dot(rd, n), 0.0, 1.0), 5.0);
+  vec3 refl = env(reflect(rd, n));
+  float spec = 1.5 * pow(max(dot(n, normalize(KEY - rd)), 0.0), 150.0);
+
+  // March the refracted ray through the gel and the video content suspended in it.
+  vec3 rt = refract(rd, n, 1.0 / uIor), q0 = p - n * 0.003;
+  float dt = length(2.0 * uHalf) / float(uSteps);
+  float tint = min(1.0, max(uGelSigma.r, max(uGelSigma.g, uGelSigma.b)));
+  vec3 glow = 0.3 * tint * exp(-0.5 * uGelSigma);   // light scattered inside the gel
+  vec3 T = vec3(1.0), L = vec3(0.0), x = q0;
+  bool exited = false;
+  float s = dt * jitter;
+  for (int i = 0; i < 4096; i++) {
+    if (i >= uSteps * 2) break;
+    x = q0 + rt * s;
+    if (jelloSdf(x) > 0.0) { exited = true; break; }
+    T *= exp(-uGelSigma * dt);
+    L += T * glow * dt;
+    if (uHasVol == 1 && uDensity > 0.0) {
+      vec3 uvw = toUvw(unwarp(x));
+      vec4 v = texture(uVol, uvw);
+      if (uDye == 1) {
+        // Coloured gel: absorbs the complement of its colour and scatters its own colour.
+        vec3 c = shade(v, uvw);
+        float w = transfer(v) * uDensity * 2.5;
+        L += T * c * (0.8 * w * dt);
+        T *= exp(-((1.0 - clamp(c, 0.0, 1.0)) * 1.2 + 0.25) * w * dt);
+      } else {
+        float sa = 1.0 - exp(-transfer(v) * uDensity * dt * 25.0);
+        L += T * sa * shade(v, uvw);
+        T *= 1.0 - sa;
+      }
+    }
+    if (max(T.r, max(T.g, T.b)) < 0.01) break;
+    s += dt;
+  }
+  if (exited) {
+    vec3 nE = jelloNormal(x), ro2 = refract(rt, -nE, uIor);
+    if (dot(ro2, ro2) < 1e-6) L += T * 0.6 * env(reflect(rt, -nE));   // total internal reflection
+    else L += T * backdrop(x + nE * 0.003, ro2, bgDir(ro2));
+  }
+  return mix(L, refl, F) + spec;
+}
+
 void main() {
   vec2 ndc = vNdc - uShift;  // re-centre the view in the area not covered by the panel
   vec3 rd = normalize(uCamFwd + ndc.x * uTan.x * uCamRight + ndc.y * uTan.y * uCamUp);
   vec3 ro = uCamPos;
   vec3 bg = vec3(0.058, 0.063, 0.078) + 0.03 * vNdc.y;
-  vec2 th = boxHit(ro, rd);
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  if (uMode == 2) { outColor = vec4(jello(ro, rd, bg, jitter), 1.0); return; }
+  vec2 th = boxHit(ro, rd, uHalf);
   if (th.x > th.y || th.y < 0.0) { outColor = vec4(bg, 1.0); return; }
   float tN = max(th.x, 0.0), tF = th.y;
 
@@ -220,7 +361,6 @@ void main() {
   bool doVol = uHasVol == 1 && dens > 0.0;
 
   float dt = length(2.0 * uHalf) / float(uSteps);
-  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
   float t = tN + dt * jitter;
 
   if (uMode == 0) {
@@ -347,6 +487,57 @@ function fitDistance() {
   return r / Math.sin(fovMin / 2) * 1.02;
 }
 
+function camera() {
+  const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+  const pos = [state.dist * cp * Math.sin(state.yaw), state.dist * sp, state.dist * cp * Math.cos(state.yaw)];
+  const fwd = norm(pos.map(x => -x));
+  const right = norm(cross(fwd, [0, 1, 0]));
+  return { pos, fwd, right, up: cross(right, fwd) };
+}
+
+// ---------------------------------------------------------------- jello physics
+function stepWobble(dt) {
+  if (state.mode !== 2) { wob.x.fill(0); wob.v.fill(0); return false; }
+  const zeta = 0.25 - 0.23 * state.jiggle, n = 8, h = dt / n;
+  let energy = 0;
+  for (let k = 0; k < 4; k++) {
+    const w = 2 * Math.PI * WOB_FREQ[k];
+    for (let i = 0; i < n; i++) {
+      wob.v[k] += (-w * w * wob.x[k] - 2 * zeta * w * wob.v[k]) * h;
+      wob.x[k] += wob.v[k] * h;
+    }
+    energy += Math.abs(wob.x[k]) + Math.abs(wob.v[k]) / w;
+  }
+  if (energy < 2e-4) { wob.x.fill(0); wob.v.fill(0); return false; }
+  return true;
+}
+function kick(dv) {
+  if (state.mode !== 2) return;
+  for (let k = 0; k < 4; k++) {
+    const vmax = WOB_MAX[k] * 2 * Math.PI * WOB_FREQ[k];
+    wob.v[k] = Math.max(-vmax, Math.min(vmax, wob.v[k] + dv[k]));
+  }
+  if (!wobbling) { wobbling = true; lastWobT = 0; }
+  requestRender();
+}
+// Tap on the jello: push it away from the camera at the point that was hit.
+function poke(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect(), [cx, cy] = panelCover();
+  const nx = (clientX - rect.left) / rect.width * 2 - 1 + cx, ny = 1 - (clientY - rect.top) / rect.height * 2 - cy;
+  const { pos, fwd, right, up } = camera(), tanH = Math.tan(FOV / 2), aspect = rect.width / rect.height;
+  const rd = norm([0, 1, 2].map(i => fwd[i] + nx * tanH * aspect * right[i] + ny * tanH * up[i]));
+  const H = halfExtents();
+  let tN = -Infinity, tF = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const inv = 1 / (Math.abs(rd[i]) > 1e-6 ? rd[i] : 1e-6);
+    const a = (-H[i] - pos[i]) * inv, b = (H[i] - pos[i]) * inv;
+    tN = Math.max(tN, Math.min(a, b)); tF = Math.min(tF, Math.max(a, b));
+  }
+  if (tN > tF || tF < 0) return;
+  const hit = pos.map((p, i) => p + rd[i] * tN), s = (hit[1] + H[1]) / (2 * H[1]), I = 4;
+  kick([rd[0] * I * s, rd[2] * I * s, -I * (0.25 + 0.75 * Math.max(0, -rd[1])), (hit[2] * rd[0] - hit[0] * rd[2]) * I * 1.2]);
+}
+
 function requestRender() {
   if (!needsRender) { needsRender = true; requestAnimationFrame(frame); }
 }
@@ -360,22 +551,24 @@ function frame(now) {
     setValue('offset', o);
     requestRender();
   }
+  if (wobbling) {
+    const dt = lastWobT ? Math.min(0.05, (now - lastWobT) / 1000) : 1 / 60;
+    lastWobT = now;
+    wobbling = stepWobble(dt);
+    requestRender();
+  }
   render();
 }
 function render() {
   if (!gl || gl.isContextLost()) return;
-  const lowQ = interacting || sweeping;
+  const lowQ = interacting || sweeping || wobbling;
   const scale = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2) * state.res * (interacting ? 0.5 : 1);
   const W = Math.max(1, Math.round(canvas.clientWidth * scale)), H = Math.max(1, Math.round(canvas.clientHeight * scale));
   if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
   gl.viewport(0, 0, W, H);
   gl.useProgram(prog);
 
-  const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
-  const pos = [state.dist * cp * Math.sin(state.yaw), state.dist * sp, state.dist * cp * Math.cos(state.yaw)];
-  const fwd = norm(pos.map(x => -x));
-  const right = norm(cross(fwd, [0, 1, 0]));
-  const up = cross(right, fwd);
+  const { pos, fwd, right, up } = camera();
   const tanH = Math.tan(FOV / 2);
   const n = planeNormal();
   const extent = Math.abs(n[0]) + Math.abs(n[1]) + Math.abs(n[2]);
@@ -400,6 +593,10 @@ function render() {
   gl.uniform1f(U.uDensity, state.density);
   gl.uniform1f(U.uBright, state.bright);
   gl.uniform1f(U.uGhost, state.ghost);
+  gl.uniform4fv(U.uWob, wob.x);
+  gl.uniform3fv(U.uGelSigma, GELS[state.gel]);
+  gl.uniform1f(U.uIor, state.ior);
+  gl.uniform1i(U.uDye, state.dye);
   gl.activeTexture(gl.TEXTURE0);
   gl.bindTexture(gl.TEXTURE_3D, volTex || dummyTex);
   gl.uniform1i(U.uVol, 0);
@@ -594,14 +791,17 @@ for (const el of ranges) {
   });
 }
 function syncSegs() {
+  $('jelloSec').hidden = state.mode !== 2;
   for (const seg of document.querySelectorAll('.seg'))
     for (const b of seg.children) b.classList.toggle('on', +b.dataset.v === state[seg.dataset.key]);
 }
 for (const seg of document.querySelectorAll('.seg')) {
   seg.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
+    const prev = state[seg.dataset.key];
     state[seg.dataset.key] = +b.dataset.v;
     syncSegs(); requestRender();
+    if (seg.dataset.key === 'mode' && state.mode === 2 && prev !== 2) kick([1, 0.6, -5, 0.8]);   // plop
   });
 }
 const presets = { xy: [180, 0], xt: [0, -90], yt: [-90, 0] };
@@ -619,6 +819,7 @@ $('sweep').onclick = () => {
   if (sweeping && state.planeMode === 0) { state.planeMode = 1; syncSegs(); }
   requestRender();
 };
+$('wobble').onclick = () => kick([(Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, -3, (Math.random() - 0.5) * 4]);
 $('resetView').onclick = () => { state.yaw = 0.65; state.pitch = 0.38; state.dist = fitDistance(); requestRender(); };
 $('togglePanel').onclick = () => { $('panel').classList.toggle('hidden'); };
 $('panel').addEventListener('transitionend', () => { state.dist = fitDistance(); requestRender(); });
@@ -632,7 +833,7 @@ $('dragMode').onclick = () => {
 
 // ---------------------------------------------------------------- gestures
 const pointers = new Map();
-let pinchDist = 0;
+let pinchDist = 0, tap = null;
 function bumpInteract() {
   interacting = true;
   clearTimeout(interactTimer);
@@ -644,17 +845,20 @@ canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) pinchDist = pinchSpan();
+  tap = pointers.size === 1 ? { t: performance.now(), moved: 0 } : null;
 });
 canvas.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId); if (!p) return;
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
   p.x = e.clientX; p.y = e.clientY;
+  if (tap) tap.moved += Math.abs(dx) + Math.abs(dy);
   if (pointers.size === 1) {
     if (dragPlane) {
       setValue('offset', Math.max(-1, Math.min(1, state.offset + (dy - dx) / Math.min(canvas.clientWidth, canvas.clientHeight) * 1.5)));
     } else {
       state.yaw -= dx * 0.008;
       state.pitch = Math.max(-1.55, Math.min(1.55, state.pitch + dy * 0.008));
+      if (state.mode === 2) kick([0, 0, 0, -dx * 0.03]);   // turning the plate makes the top lag
     }
   } else if (pointers.size === 2) {
     const s = pinchSpan();
@@ -662,6 +866,10 @@ canvas.addEventListener('pointermove', e => {
     pinchDist = s;
   }
   bumpInteract();
+});
+canvas.addEventListener('pointerup', e => {
+  if (tap && pointers.size === 1 && tap.moved < 8 && performance.now() - tap.t < 350 && state.mode === 2) poke(e.clientX, e.clientY);
+  tap = null;
 });
 const endPointer = e => { pointers.delete(e.pointerId); pinchDist = pointers.size === 2 ? pinchSpan() : 0; };
 canvas.addEventListener('pointerup', endPointer);

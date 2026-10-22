@@ -30,6 +30,15 @@ phone on the same Wi‑Fi. A demo volume loads on start.
 
 - **Volume** blends voxels front to back. **Max intensity** shows the
   strongest voxel along each line of sight.
+- **Jello** turns the volume into a block of gelatin on a plate. The video
+  content is suspended inside, seen through a refracting, glossy, tinted gel.
+  Tap the block to poke it, spin the view to make it twist, or tap **Wobble**.
+  The **Jello** section sets the **Gel** colour, **Wobbliness** (how long it
+  keeps jiggling) and **Refraction**. Cutting with the plane slices the jello.
+  **Video content: Dyed gel** makes every voxel a little see-through, like
+  gelatin dyed with the video's colours: it tints the light passing through
+  rather than blocking it. Pair it with **Uniform** opacity and **Clear** gel;
+  **Density** sets how strong the dye is.
 - **Opacity from** sets which voxels are visible:
   - **Motion**: how far a pixel differs from its median over the clip, so
     moving objects become tubes through time.
