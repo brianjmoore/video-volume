@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f1014">
+<title>Video Volume</title>
+<style>
+  :root { --bg:#0f1014; --panel:rgba(22,24,30,.92); --fg:#e6e8ee; --dim:#9aa0ad; --acc:#ffbf3c; --line:#2c303a; }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:14px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; overscroll-behavior:none; }
+  #gl { position:fixed; inset:0; width:100%; height:100%; touch-action:none; display:block; }
+  button,.btn { font:inherit; color:var(--fg); background:#262a33; border:1px solid var(--line); border-radius:8px;
+    padding:8px 12px; min-height:38px; cursor:pointer; user-select:none; -webkit-user-select:none; }
+  button:active,.btn:active { background:#323743; }
+  button.primary { background:var(--acc); color:#1a1405; border-color:var(--acc); font-weight:600; }
+  button:disabled { opacity:.45; }
+  #top { position:fixed; z-index:2; top:0; left:0; right:0; display:flex; gap:6px; flex-wrap:wrap; align-items:center;
+    padding:calc(env(safe-area-inset-top) + 8px) 10px 8px; pointer-events:none; }
+  #top > * { pointer-events:auto; }
+  #top .spacer { flex:1; pointer-events:none; }
+  #dragMode.on { background:var(--acc); color:#1a1405; border-color:var(--acc); }
+  #status { position:fixed; left:10px; top:calc(env(safe-area-inset-top) + 56px); color:var(--dim); font-size:12px;
+    pointer-events:none; text-shadow:0 1px 2px #000; max-width:70vw; }
+  #panel { position:fixed; left:0; right:0; bottom:0; max-height:48vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
+    background:var(--panel); border-top:1px solid var(--line); padding:6px 12px calc(env(safe-area-inset-bottom) + 12px);
+    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); transition:transform .2s; }
+  #panel.hidden { transform:translateY(100%); }
+  @media (min-width:820px) and (orientation:landscape) {
+    #panel { left:auto; top:0; width:340px; max-height:none; border-top:none; border-left:1px solid var(--line);
+      padding-top:calc(env(safe-area-inset-top) + 56px); }
+    #panel.hidden { transform:translateX(100%); }
+  }
+  section { padding:8px 0; border-bottom:1px solid var(--line); }
+  section:last-child { border-bottom:none; }
+  h3 { margin:4px 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
+  .ctl { display:grid; grid-template-columns:92px 1fr 58px; align-items:center; gap:8px; margin:4px 0; }
+  .ctl label { color:var(--dim); font-size:13px; }
+  .ctl output { text-align:right; font-variant-numeric:tabular-nums; font-size:12px; color:var(--fg); }
+  input[type=range] { width:100%; height:30px; margin:0; accent-color:var(--acc); }
+  .seg { display:flex; margin:6px 0; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button { flex:1; border:none; border-radius:0; background:transparent; padding:7px 4px; min-height:34px; font-size:13px; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.on { background:var(--acc); color:#1a1405; font-weight:600; }
+  .segLabel { color:var(--dim); font-size:12px; margin-top:6px; }
+  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0; }
+  .row button { flex:1; }
+  video#vid { width:100%; max-height:28vh; background:#000; border-radius:6px; }
+  #mem { color:var(--dim); font-size:12px; }
+  #mem.warn { color:#ff7a6b; }
+  progress { width:100%; height:8px; accent-color:var(--acc); }
+  #hint { position:fixed; left:50%; top:45%; transform:translate(-50%,-50%); color:var(--dim); text-align:center; pointer-events:none; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div id="hint"></div>
+
+<div id="top">
+  <label class="btn">Open video<input type="file" id="file" accept="video/*" hidden></label>
+  <button id="demo">Demo</button>
+  <span class="spacer"></span>
+  <button id="dragMode" title="Drag on the view to move the plane instead of orbiting">Drag: orbit</button>
+  <button id="togglePanel">Controls</button>
+</div>
+<div id="status"></div>
+
+<div id="panel">
+  <section id="srcSec" hidden>
+    <h3>Source</h3>
+    <video id="vid" controls playsinline muted preload="auto"></video>
+    <div class="row">
+      <button id="setStart">Set start</button>
+      <button id="setEnd">Set end</button>
+    </div>
+    <div class="ctl"><label>Start (s)</label><input type="range" id="t0" min="0" max="1" step="0.01" value="0"><output id="t0o"></output></div>
+    <div class="ctl"><label>End (s)</label><input type="range" id="t1" min="0" max="1" step="0.01" value="1"><output id="t1o"></output></div>
+    <div class="ctl"><label>Frames</label><input type="range" id="frames" min="8" max="256" step="1" value="96"><output id="frameso"></output></div>
+    <div class="ctl"><label>Width (px)</label><input type="range" id="width" min="32" max="384" step="8" value="160"><output id="widtho"></output></div>
+    <div id="mem"></div>
+    <div class="row"><button id="build" class="primary">Build volume</button></div>
+    <progress id="prog" max="1" value="0" hidden></progress>
+  </section>
+
+  <section>
+    <h3>Render</h3>
+    <div class="segLabel">Mode</div>
+    <div class="seg" data-key="mode"><button data-v="0">Volume</button><button data-v="1">Max intensity</button></div>
+    <div class="segLabel">Opacity from</div>
+    <div class="seg" data-key="alphaSrc"><button data-v="2">Motion</button><button data-v="0">Bright</button><button data-v="1">Dark</button><button data-v="3">Uniform</button></div>
+    <div class="segLabel">Color</div>
+    <div class="seg" data-key="colorMode"><button data-v="0">Video</button><button data-v="1">Time hue</button></div>
+    <div class="ctl"><label>Threshold</label><input type="range" data-key="threshold" min="0" max="1" step="0.01"><output></output></div>
+    <div class="ctl"><label>Softness</label><input type="range" data-key="soft" min="0" max="1" step="0.01"><output></output></div>
+    <div class="ctl"><label>Density</label><input type="range" data-key="density" data-log min="-2" max="2" step="0.01"><output></output></div>
+    <div class="ctl"><label>Brightness</label><input type="range" data-key="bright" min="0.2" max="3" step="0.01"><output></output></div>
+    <div class="ctl"><label>Time length</label><input type="range" data-key="depthScale" min="0.2" max="4" step="0.01"><output></output></div>
+    <div class="ctl"><label>Quality</label><input type="range" data-key="steps" min="32" max="512" step="8"><output></output></div>
+    <div class="ctl"><label>Resolution</label><input type="range" data-key="res" min="0.25" max="1" step="0.05"><output></output></div>
+  </section>
+
+  <section>
+    <h3>Plane</h3>
+    <div class="seg" data-key="planeMode"><button data-v="0">Off</button><button data-v="1">Cut volume</button><button data-v="2">Slice only</button></div>
+    <div class="row">
+      <button data-preset="xy">Frame (XY)</button>
+      <button data-preset="xt">Row (XT)</button>
+      <button data-preset="yt">Column (YT)</button>
+    </div>
+    <div class="ctl"><label>Position</label><input type="range" data-key="offset" min="-1" max="1" step="0.002"><output id="offsetOut"></output></div>
+    <div class="ctl"><label>Azimuth</label><input type="range" data-key="theta" min="-180" max="180" step="1"><output></output></div>
+    <div class="ctl"><label>Elevation</label><input type="range" data-key="phi" min="-90" max="90" step="1"><output></output></div>
+    <div class="ctl"><label>Ghost vol.</label><input type="range" data-key="ghost" min="0" max="1" step="0.01"><output></output></div>
+    <div class="row"><button id="sweep">▶ Sweep plane</button><button id="resetView">Reset view</button></div>
+  </section>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const canvas = $('gl');
+const coarse = matchMedia('(pointer:coarse)').matches;
+
+const state = {
+  yaw: 0.65, pitch: 0.38, dist: 3,
+  mode: 0, alphaSrc: 2, colorMode: 0,
+  threshold: 0.12, soft: 0.25, density: 1, bright: 1, depthScale: 1.4,
+  steps: coarse ? 160 : 256, res: 1,
+  planeMode: 0, theta: 180, phi: 0, offset: -1, ghost: 0.15,
+};
+let volume = null;          // { w, h, d, data, t0, t1, label }
+let gl, prog, vao, volTex, dummyTex, U = {}, maxTex3D = 256;
+let interacting = false, interactTimer = 0, sweeping = false, sweepDir = 1, lastSweepT = 0;
+let needsRender = false;
+
+// ---------------------------------------------------------------- shaders
+const VS = `#version 300 es
+in vec2 aPos; out vec2 vNdc;
+void main(){ vNdc = aPos; gl_Position = vec4(aPos, 0.0, 1.0); }`;
+
+const FS = `#version 300 es
+precision highp float;
+precision highp sampler3D;
+in vec2 vNdc; out vec4 outColor;
+uniform sampler3D uVol;
+uniform vec3 uCamPos, uCamRight, uCamUp, uCamFwd, uHalf, uNormal;
+uniform vec2 uTan, uShift;
+uniform int uMode, uAlphaSrc, uColorMode, uPlaneMode, uSteps, uHasVol;
+uniform float uThresh, uSoft, uDensity, uBright, uOffset, uGhost, uPixel;
+
+const vec3 LUMA = vec3(0.299, 0.587, 0.114);
+const vec3 ACCENT = vec3(1.0, 0.75, 0.24);
+
+vec2 boxHit(vec3 ro, vec3 rd) {
+  vec3 r = mix(rd, vec3(1e-6), lessThan(abs(rd), vec3(1e-6)));
+  vec3 inv = 1.0 / r;
+  vec3 a = (-uHalf - ro) * inv, b = (uHalf - ro) * inv;
+  vec3 lo = min(a, b), hi = max(a, b);
+  return vec2(max(max(lo.x, lo.y), lo.z), min(min(hi.x, hi.y), hi.z));
+}
+// x: width, y: height (top of frame at +y), z: time (first frame at +z, toward the default camera)
+vec3 toUvw(vec3 p) { vec3 u = p / (2.0 * uHalf); return vec3(u.x + 0.5, 0.5 - u.y, 0.5 - u.z); }
+vec3 hue(float h) { return clamp(abs(mod(h * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0, 0.0, 1.0); }
+
+float transfer(vec4 s) {
+  float v = uAlphaSrc == 0 ? dot(s.rgb, LUMA)
+          : uAlphaSrc == 1 ? 1.0 - dot(s.rgb, LUMA)
+          : uAlphaSrc == 2 ? s.a : 1.0;
+  return smoothstep(uThresh, uThresh + uSoft + 1e-4, v);
+}
+vec3 shade(vec4 s, vec3 uvw) {
+  vec3 c = uColorMode == 0 ? s.rgb : hue(uvw.z * 0.8) * (0.3 + 0.7 * dot(s.rgb, LUMA));
+  return c * uBright;
+}
+// Distance to the nearest box edge (second-smallest distance to a face).
+float edgeDist(vec3 p) {
+  vec3 d = uHalf - abs(p);
+  float mx = max(d.x, max(d.y, d.z)), mn = min(d.x, min(d.y, d.z));
+  return d.x + d.y + d.z - mx - mn;
+}
+vec3 edgeColor(vec3 p) {
+  vec3 d = uHalf - abs(p);
+  return (d.z > d.x && d.z > d.y) ? vec3(0.95, 0.55, 0.2) : vec3(0.45, 0.5, 0.6); // time-parallel edges in orange
+}
+float keepSide(vec3 p) { return dot(uNormal, p / uHalf) >= uOffset ? 1.0 : 0.0; }
+
+vec3 planeColor(vec3 p, float t) {
+  vec3 c = uHasVol == 1 ? texture(uVol, toUvw(p)).rgb : vec3(0.18);
+  vec3 d = uHalf - abs(p);
+  float w = uPixel * t * 2.0;
+  return mix(c, ACCENT, 1.0 - smoothstep(0.4 * w, w, min(d.x, min(d.y, d.z))));
+}
+
+void main() {
+  vec2 ndc = vNdc - uShift;  // re-centre the view in the area not covered by the panel
+  vec3 rd = normalize(uCamFwd + ndc.x * uTan.x * uCamRight + ndc.y * uTan.y * uCamUp);
+  vec3 ro = uCamPos;
+  vec3 bg = vec3(0.058, 0.063, 0.078) + 0.03 * vNdc.y;
+  vec2 th = boxHit(ro, rd);
+  if (th.x > th.y || th.y < 0.0) { outColor = vec4(bg, 1.0); return; }
+  float tN = max(th.x, 0.0), tF = th.y;
+
+  vec3 pF = ro + rd * tF, pN = ro + rd * tN;
+  float wF = uPixel * tF * 1.5, wN = uPixel * tN * 1.5;
+  vec3 back = mix(bg, edgeColor(pF), 0.5 * (1.0 - smoothstep(0.4 * wF, wF, edgeDist(pF))));
+
+  vec3 acc = vec3(0.0); float a = 0.0;
+  float eN = 0.8 * (1.0 - smoothstep(0.4 * wN, wN, edgeDist(pN)));
+  acc += eN * edgeColor(pN); a += eN;
+
+  // Plane: dot(uNormal, p / uHalf) = uOffset
+  vec3 nW = uNormal / uHalf;
+  float den = dot(nW, rd);
+  float tP = abs(den) > 1e-6 ? (uOffset - dot(nW, ro)) / den : -1.0;
+  bool planeHit = uPlaneMode > 0 && tP >= tN && tP <= tF;
+  bool cut = uPlaneMode == 1;
+  float dens = uDensity * (uPlaneMode == 2 ? uGhost : 1.0);
+  bool doVol = uHasVol == 1 && dens > 0.0;
+
+  float dt = length(2.0 * uHalf) / float(uSteps);
+  float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+  float t = tN + dt * jitter;
+
+  if (uMode == 0) {
+    bool planeDone = !planeHit;
+    if (doVol) {
+      for (int i = 0; i < 4096; i++) {
+        if (i >= uSteps * 2 || t > tF || a > 0.985) break;
+        if (!planeDone && t >= tP) {
+          planeDone = true;
+          vec3 pc = planeColor(ro + rd * tP, tP);
+          acc += (1.0 - a) * pc; a = 1.0; break;
+        }
+        vec3 p = ro + rd * t;
+        if (!cut || keepSide(p) > 0.5) {
+          vec3 uvw = toUvw(p);
+          vec4 s = texture(uVol, uvw);
+          float sa = 1.0 - exp(-transfer(s) * dens * dt * 25.0);
+          acc += (1.0 - a) * sa * shade(s, uvw);
+          a += (1.0 - a) * sa;
+        }
+        t += dt;
+      }
+    }
+    if (!planeDone && a < 0.985) { acc += (1.0 - a) * planeColor(ro + rd * tP, tP); a = 1.0; }
+  } else {
+    float best = 0.0; vec3 bc = vec3(0.0);
+    if (doVol) {
+      for (int i = 0; i < 4096; i++) {
+        if (i >= uSteps * 2 || t > tF) break;
+        vec3 p = ro + rd * t;
+        if (!cut || keepSide(p) > 0.5) {
+          vec3 uvw = toUvw(p);
+          vec4 s = texture(uVol, uvw);
+          float v = transfer(s);
+          if (v > best) { best = v; bc = shade(s, uvw); }
+        }
+        t += dt;
+      }
+      best *= min(1.0, dens);
+    }
+    vec3 under = planeHit ? planeColor(ro + rd * tP, tP) : back;
+    acc += (1.0 - a) * mix(under, bc, best); a = 1.0;
+  }
+  outColor = vec4(acc + (1.0 - a) * back, 1.0);
+}`;
+
+// ---------------------------------------------------------------- GL setup
+function compile(type, src) {
+  const s = gl.createShader(type);
+  gl.shaderSource(s, src); gl.compileShader(s);
+  if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s));
+  return s;
+}
+function initGL() {
+  gl = canvas.getContext('webgl2', { antialias: false, alpha: false, powerPreference: 'high-performance', preserveDrawingBuffer: false });
+  if (!gl) { $('hint').textContent = 'WebGL2 is not available in this browser.'; return false; }
+  maxTex3D = gl.getParameter(gl.MAX_3D_TEXTURE_SIZE);
+  prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+  gl.bindAttribLocation(prog, 0, 'aPos');
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  U = {};
+  const n = gl.getProgramParameter(prog, gl.ACTIVE_UNIFORMS);
+  for (let i = 0; i < n; i++) { const name = gl.getActiveUniform(prog, i).name; U[name] = gl.getUniformLocation(prog, name); }
+
+  vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  const buf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+
+  dummyTex = makeTex3D(1, 1, 1, new Uint8Array(4));
+  volTex = null;
+  if (volume) uploadVolume();
+  return true;
+}
+function makeTex3D(w, h, d, data) {
+  const t = gl.createTexture();
+  gl.bindTexture(gl.TEXTURE_3D, t);
+  gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+  gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA8, w, h, d, 0, gl.RGBA, gl.UNSIGNED_BYTE, data);
+  gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_3D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+  return t;
+}
+function uploadVolume() {
+  if (volTex) gl.deleteTexture(volTex);
+  volTex = makeTex3D(volume.w, volume.h, volume.d, volume.data);
+}
+canvas.addEventListener('webglcontextlost', e => { e.preventDefault(); sweeping = false; });
+canvas.addEventListener('webglcontextrestored', () => { initGL(); requestRender(); });
+
+// ---------------------------------------------------------------- rendering
+const norm = v => { const l = Math.hypot(...v); return v.map(x => x / l); };
+const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+const FOV = 45 * Math.PI / 180;
+
+function halfExtents() {
+  const aspect = volume ? volume.w / volume.h : 16 / 9;
+  return [aspect * 0.5, 0.5, 0.5 * state.depthScale];
+}
+function planeNormal() {
+  const th = state.theta * Math.PI / 180, ph = state.phi * Math.PI / 180;
+  return [Math.sin(th) * Math.cos(ph), Math.sin(ph), Math.cos(th) * Math.cos(ph)];
+}
+// Fraction of the canvas covered by the panel, as [x, y]: right-side panel on wide screens, bottom sheet otherwise.
+function panelCover() {
+  const p = $('panel'), r = p.getBoundingClientRect();
+  if (p.classList.contains('hidden')) return [0, 0];
+  if (r.top <= 1) return [Math.max(0, innerWidth - r.left) / innerWidth, 0];
+  return [0, Math.max(0, innerHeight - r.top) / innerHeight];
+}
+function fitDistance() {
+  const r = Math.hypot(...halfExtents());
+  const [cx, cy] = panelCover();
+  const aspect = canvas.clientWidth * (1 - cx) / Math.max(1, canvas.clientHeight * (1 - cy));
+  const tanV = Math.tan(FOV / 2) * (1 - cy);
+  const fovMin = 2 * Math.atan(Math.min(tanV, tanV * aspect));
+  return r / Math.sin(fovMin / 2) * 1.02;
+}
+
+function requestRender() {
+  if (!needsRender) { needsRender = true; requestAnimationFrame(frame); }
+}
+function frame(now) {
+  needsRender = false;
+  if (sweeping) {
+    const dt = lastSweepT ? Math.min(0.1, (now - lastSweepT) / 1000) : 0;
+    lastSweepT = now;
+    let o = state.offset + sweepDir * dt * 0.4;
+    if (o > 1) { o = 1; sweepDir = -1; } else if (o < -1) { o = -1; sweepDir = 1; }
+    setValue('offset', o);
+    requestRender();
+  }
+  render();
+}
+function render() {
+  if (!gl || gl.isContextLost()) return;
+  const lowQ = interacting || sweeping;
+  const scale = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2) * state.res * (interacting ? 0.5 : 1);
+  const W = Math.max(1, Math.round(canvas.clientWidth * scale)), H = Math.max(1, Math.round(canvas.clientHeight * scale));
+  if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  gl.viewport(0, 0, W, H);
+  gl.useProgram(prog);
+
+  const cp = Math.cos(state.pitch), sp = Math.sin(state.pitch);
+  const pos = [state.dist * cp * Math.sin(state.yaw), state.dist * sp, state.dist * cp * Math.cos(state.yaw)];
+  const fwd = norm(pos.map(x => -x));
+  const right = norm(cross(fwd, [0, 1, 0]));
+  const up = cross(right, fwd);
+  const tanH = Math.tan(FOV / 2);
+  const n = planeNormal();
+  const extent = Math.abs(n[0]) + Math.abs(n[1]) + Math.abs(n[2]);
+
+  gl.uniform3fv(U.uCamPos, pos); gl.uniform3fv(U.uCamFwd, fwd);
+  gl.uniform3fv(U.uCamRight, right); gl.uniform3fv(U.uCamUp, up);
+  gl.uniform2f(U.uTan, tanH * W / H, tanH);
+  const [cx, cy] = panelCover();
+  gl.uniform2f(U.uShift, -cx, cy);
+  gl.uniform1f(U.uPixel, 2 * tanH / H);
+  gl.uniform3fv(U.uHalf, halfExtents());
+  gl.uniform3fv(U.uNormal, n);
+  gl.uniform1f(U.uOffset, state.offset * extent);
+  gl.uniform1i(U.uMode, state.mode);
+  gl.uniform1i(U.uAlphaSrc, state.alphaSrc);
+  gl.uniform1i(U.uColorMode, state.colorMode);
+  gl.uniform1i(U.uPlaneMode, state.planeMode);
+  gl.uniform1i(U.uSteps, Math.round(lowQ ? Math.max(32, state.steps * 0.5) : state.steps));
+  gl.uniform1i(U.uHasVol, volume ? 1 : 0);
+  gl.uniform1f(U.uThresh, state.threshold);
+  gl.uniform1f(U.uSoft, state.soft);
+  gl.uniform1f(U.uDensity, state.density);
+  gl.uniform1f(U.uBright, state.bright);
+  gl.uniform1f(U.uGhost, state.ghost);
+  gl.activeTexture(gl.TEXTURE0);
+  gl.bindTexture(gl.TEXTURE_3D, volTex || dummyTex);
+  gl.uniform1i(U.uVol, 0);
+  gl.bindVertexArray(vao);
+  gl.drawArrays(gl.TRIANGLES, 0, 3);
+}
+
+// ---------------------------------------------------------------- volume building
+// Alpha channel = per-voxel motion: max channel difference from the per-pixel temporal median.
+function computeMotion(data, w, h, d) {
+  const N = w * h, hist = new Uint16Array(256), half = d / 2;
+  const med = new Uint8Array(N * 3);
+  for (let i = 0; i < N; i++) {
+    for (let c = 0; c < 3; c++) {
+      hist.fill(0);
+      for (let z = 0; z < d; z++) hist[data[(z * N + i) * 4 + c]]++;
+      let s = 0, v = 0;
+      for (; v < 256; v++) { s += hist[v]; if (s >= half) break; }
+      med[i * 3 + c] = v;
+    }
+  }
+  for (let z = 0; z < d; z++) {
+    for (let i = 0; i < N; i++) {
+      const o = (z * N + i) * 4, m = i * 3;
+      const diff = Math.max(Math.abs(data[o] - med[m]), Math.abs(data[o + 1] - med[m + 1]), Math.abs(data[o + 2] - med[m + 2]));
+      data[o + 3] = Math.min(255, diff * 2);
+    }
+  }
+}
+
+async function buildVolume(w, h, d, drawFrame, meta) {
+  const cv = document.createElement('canvas');
+  cv.width = w; cv.height = h;
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
+  const data = new Uint8Array(w * h * d * 4);
+  const prog = $('prog');
+  prog.hidden = false;
+  for (let z = 0; z < d; z++) {
+    await drawFrame(ctx, z);
+    data.set(ctx.getImageData(0, 0, w, h).data, z * w * h * 4);
+    prog.value = (z + 1) / d * 0.95;
+    setStatus(`Extracting frame ${z + 1} / ${d}`);
+  }
+  setStatus('Computing motion…');
+  await new Promise(r => setTimeout(r, 0));
+  computeMotion(data, w, h, d);
+  prog.hidden = true;
+  volume = { w, h, d, data, ...meta };
+  uploadVolume();
+  state.dist = fitDistance();
+  $('hint').textContent = '';
+  updateLabels();
+  setStatus(`${meta.label} · ${w}×${h}×${d} voxels · ${(data.length / 1048576).toFixed(1)} MB`);
+  requestRender();
+}
+
+function loadDemo() {
+  const w = 192, h = 108, d = 144;
+  const draw = (ctx, z) => {
+    const t = z / (d - 1);
+    const g = ctx.createLinearGradient(0, 0, 0, h);
+    g.addColorStop(0, '#1d3557'); g.addColorStop(0.65, '#457b9d'); g.addColorStop(0.66, '#2a4d2f'); g.addColorStop(1, '#1b301e');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = '#f1faee';                                    // static "sun" (no motion)
+    ctx.beginPath(); ctx.arc(160, 20, 9, 0, 7); ctx.fill();
+    const bx = 15 + t * 160, by = 70 - Math.abs(Math.sin(t * Math.PI * 3)) * 55;   // bouncing ball
+    ctx.fillStyle = '#ff7b00'; ctx.beginPath(); ctx.arc(bx, by, 9, 0, 7); ctx.fill();
+    ctx.fillStyle = '#e63946';                                    // car driving right-to-left
+    ctx.fillRect(170 - t * 190, 80, 28, 12);
+    ctx.save(); ctx.translate(60, 40); ctx.rotate(t * Math.PI * 2);   // spinning bar
+    ctx.fillStyle = '#a8dadc'; ctx.fillRect(-22, -3, 44, 6); ctx.restore();
+  };
+  return buildVolume(w, h, d, draw, { t0: 0, t1: d / 30, label: 'Demo' });
+}
+
+// ---- video source
+const vid = $('vid');
+let videoUrl = null;
+$('file').addEventListener('change', e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  if (videoUrl) URL.revokeObjectURL(videoUrl);
+  videoUrl = URL.createObjectURL(f);
+  vid.src = videoUrl;
+  vid.dataset.name = f.name;
+  vid.load();
+  $('srcSec').hidden = false;
+  $('panel').classList.remove('hidden');
+  $('panel').scrollTop = 0;
+  setStatus('Loading video…');
+});
+vid.addEventListener('loadedmetadata', () => {
+  const dur = vid.duration;
+  for (const id of ['t0', 't1']) { $(id).max = dur.toFixed(2); }
+  $('t0').value = 0;
+  $('t1').value = Math.min(dur, 4).toFixed(2);
+  updateSrcLabels();
+  setStatus(`${vid.videoWidth}×${vid.videoHeight}, ${dur.toFixed(1)} s. Pick a range and tap Build volume.`);
+});
+vid.addEventListener('error', () => setStatus('This browser cannot decode that video.'));
+$('setStart').onclick = () => { $('t0').value = vid.currentTime; if (+$('t1').value <= vid.currentTime) $('t1').value = Math.min(vid.duration, vid.currentTime + 2); updateSrcLabels(); };
+$('setEnd').onclick = () => { $('t1').value = vid.currentTime; if (+$('t0').value >= vid.currentTime) $('t0').value = Math.max(0, vid.currentTime - 2); updateSrcLabels(); };
+for (const id of ['t0', 't1', 'frames', 'width']) $(id).addEventListener('input', updateSrcLabels);
+
+function srcDims() {
+  const vw = vid.videoWidth || 16, vh = vid.videoHeight || 9;
+  let w = Math.min(+$('width').value, vw, maxTex3D);
+  let h = Math.max(2, Math.round(w * vh / vw));
+  if (h > maxTex3D) { h = maxTex3D; w = Math.round(h * vw / vh); }
+  return { w, h, d: Math.min(+$('frames').value, maxTex3D) };
+}
+const MEM_LIMIT = (coarse ? 96 : 256) * 1048576;
+function updateSrcLabels() {
+  let t0 = +$('t0').value, t1 = +$('t1').value;
+  $('t0o').textContent = t0.toFixed(2); $('t1o').textContent = t1.toFixed(2);
+  $('frameso').textContent = $('frames').value; $('widtho').textContent = $('width').value;
+  const { w, h, d } = srcDims(), bytes = w * h * d * 4;
+  const fps = t1 > t0 ? (d - 1) / (t1 - t0) : 0;
+  const over = bytes > MEM_LIMIT;
+  $('mem').textContent = `${w}×${h}×${d} · ${(bytes / 1048576).toFixed(1)} MB · ${fps.toFixed(1)} samples/s` + (over ? ' · too large for this device' : '');
+  $('mem').classList.toggle('warn', over);
+  $('build').disabled = over || !(t1 > t0) || !vid.duration;
+}
+
+function seekTo(t) {
+  return new Promise(resolve => {
+    if (Math.abs(vid.currentTime - t) < 1e-3 && vid.readyState >= 2) return resolve();
+    let timer;
+    const done = () => { vid.removeEventListener('seeked', done); clearTimeout(timer); resolve(); };
+    timer = setTimeout(done, 4000);
+    vid.addEventListener('seeked', done);
+    vid.currentTime = t;
+  });
+}
+$('build').onclick = async () => {
+  const t0 = +$('t0').value, t1 = +$('t1').value;
+  const { w, h, d } = srcDims();
+  $('build').disabled = true;
+  // iOS Safari won't decode frames for seeking until playback has started once.
+  try { await vid.play(); } catch (_) {}
+  vid.pause();
+  try {
+    volume = null; if (volTex) { gl.deleteTexture(volTex); volTex = null; }
+    await buildVolume(w, h, d, async (ctx, z) => {
+      await seekTo(Math.min(t0 + (t1 - t0) * z / Math.max(1, d - 1), vid.duration - 0.01));
+      ctx.drawImage(vid, 0, 0, w, h);
+    }, { t0, t1, label: vid.dataset.name || 'Video' });
+  } catch (err) {
+    setStatus('Failed: ' + err.message);
+    $('prog').hidden = true;
+  }
+  $('build').disabled = false;
+};
+$('demo').onclick = () => { $('srcSec').hidden = true; loadDemo(); };
+
+// ---------------------------------------------------------------- UI bindings
+function setStatus(s) { $('status').textContent = s; }
+const fmt = {
+  density: v => v < 1 ? v.toFixed(2) : v.toFixed(1), steps: v => v | 0, res: v => Math.round(v * 100) + '%',
+  theta: v => v + '°', phi: v => v + '°', depthScale: v => v.toFixed(2) + '×', bright: v => v.toFixed(2) + '×',
+};
+const ranges = [...document.querySelectorAll('input[data-key]')];
+function setValue(key, v) {
+  state[key] = v;
+  const el = ranges.find(r => r.dataset.key === key);
+  if (el) el.value = el.hasAttribute('data-log') ? Math.log10(v) : v;
+  updateLabels();
+}
+function updateLabels() {
+  for (const el of ranges) {
+    const k = el.dataset.key, v = state[k];
+    el.nextElementSibling.textContent = fmt[k] ? fmt[k](v) : (+v).toFixed(2);
+  }
+  // Describe the plane position in video terms for axis-aligned planes.
+  const n = planeNormal(), frac = (state.offset + 1) / 2, out = $('offsetOut');
+  if (!volume) return;
+  if (n[2] < -0.9999) {
+    out.textContent = (volume.t0 + frac * (volume.t1 - volume.t0)).toFixed(2) + 's';
+  } else if (n[1] < -0.9999) {
+    out.textContent = 'row ' + Math.round(frac * (volume.h - 1));
+  } else if (n[0] < -0.9999) {
+    out.textContent = 'col ' + Math.round((1 - frac) * (volume.w - 1));
+  }
+}
+for (const el of ranges) {
+  el.value = el.hasAttribute('data-log') ? Math.log10(state[el.dataset.key]) : state[el.dataset.key];
+  el.addEventListener('input', () => {
+    const v = +el.value;
+    state[el.dataset.key] = el.hasAttribute('data-log') ? 10 ** v : v;
+    if (el.dataset.key === 'depthScale') state.dist = Math.max(state.dist, 0.6 * fitDistance());
+    updateLabels(); requestRender();
+  });
+}
+function syncSegs() {
+  for (const seg of document.querySelectorAll('.seg'))
+    for (const b of seg.children) b.classList.toggle('on', +b.dataset.v === state[seg.dataset.key]);
+}
+for (const seg of document.querySelectorAll('.seg')) {
+  seg.addEventListener('click', e => {
+    const b = e.target.closest('button'); if (!b) return;
+    state[seg.dataset.key] = +b.dataset.v;
+    syncSegs(); requestRender();
+  });
+}
+const presets = { xy: [180, 0], xt: [0, -90], yt: [-90, 0] };
+for (const b of document.querySelectorAll('[data-preset]')) {
+  b.onclick = () => {
+    const [th, ph] = presets[b.dataset.preset];
+    setValue('theta', th); setValue('phi', ph);
+    if (state.planeMode === 0) { state.planeMode = 1; syncSegs(); }
+    requestRender();
+  };
+}
+$('sweep').onclick = () => {
+  sweeping = !sweeping; lastSweepT = 0;
+  $('sweep').textContent = sweeping ? '■ Stop sweep' : '▶ Sweep plane';
+  if (sweeping && state.planeMode === 0) { state.planeMode = 1; syncSegs(); }
+  requestRender();
+};
+$('resetView').onclick = () => { state.yaw = 0.65; state.pitch = 0.38; state.dist = fitDistance(); requestRender(); };
+$('togglePanel').onclick = () => { $('panel').classList.toggle('hidden'); };
+$('panel').addEventListener('transitionend', () => { state.dist = fitDistance(); requestRender(); });
+let dragPlane = false;
+$('dragMode').onclick = () => {
+  dragPlane = !dragPlane;
+  $('dragMode').classList.toggle('on', dragPlane);
+  $('dragMode').textContent = dragPlane ? 'Drag: plane' : 'Drag: orbit';
+  if (dragPlane && state.planeMode === 0) { state.planeMode = 1; syncSegs(); requestRender(); }
+};
+
+// ---------------------------------------------------------------- gestures
+const pointers = new Map();
+let pinchDist = 0;
+function bumpInteract() {
+  interacting = true;
+  clearTimeout(interactTimer);
+  interactTimer = setTimeout(() => { interacting = false; requestRender(); }, 160);
+  requestRender();
+}
+function pinchSpan() { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); }
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (pointers.size === 2) pinchDist = pinchSpan();
+});
+canvas.addEventListener('pointermove', e => {
+  const p = pointers.get(e.pointerId); if (!p) return;
+  const dx = e.clientX - p.x, dy = e.clientY - p.y;
+  p.x = e.clientX; p.y = e.clientY;
+  if (pointers.size === 1) {
+    if (dragPlane) {
+      setValue('offset', Math.max(-1, Math.min(1, state.offset + (dy - dx) / Math.min(canvas.clientWidth, canvas.clientHeight) * 1.5)));
+    } else {
+      state.yaw -= dx * 0.008;
+      state.pitch = Math.max(-1.55, Math.min(1.55, state.pitch + dy * 0.008));
+    }
+  } else if (pointers.size === 2) {
+    const s = pinchSpan();
+    if (pinchDist > 0) state.dist = Math.max(0.3, Math.min(20, state.dist * pinchDist / s));
+    pinchDist = s;
+  }
+  bumpInteract();
+});
+const endPointer = e => { pointers.delete(e.pointerId); pinchDist = pointers.size === 2 ? pinchSpan() : 0; };
+canvas.addEventListener('pointerup', endPointer);
+canvas.addEventListener('pointercancel', endPointer);
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  state.dist = Math.max(0.3, Math.min(20, state.dist * Math.exp(e.deltaY * 0.0015)));
+  bumpInteract();
+}, { passive: false });
+// Stop iOS from treating gestures on the canvas as page zoom.
+document.addEventListener('gesturestart', e => e.preventDefault());
+window.addEventListener('resize', requestRender);
+
+// ---------------------------------------------------------------- start
+try {
+  if (initGL()) {
+    $('frames').max = Math.min(512, maxTex3D);
+    $('width').max = Math.min(512, maxTex3D);
+    syncSegs(); updateLabels();
+    $('hint').textContent = 'Building demo volume…';
+    loadDemo();
+  }
+} catch (err) {
+  $('hint').textContent = 'Error: ' + err.message;
+  console.error(err);
+}
+</script>
+</body>
+</html>
