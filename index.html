@@ -4,72 +4,166 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="theme-color" content="#0f1014">
+<meta name="theme-color" content="#1d1d1d">
 <title>Video Volume</title>
 <style>
-  :root { --bg:#0f1014; --panel:rgba(22,24,30,.92); --fg:#e6e8ee; --dim:#9aa0ad; --acc:#ffbf3c; --line:#2c303a; }
+  :root {
+    --chrome:#1d1d1d; --region:#262626; --box:#333; --boxhead:#3a3a3a; --field:#545454; --field-hi:#656565;
+    --sel:#4772b3; --act:#ffa033; --fg:#e6e6e6; --dim:#a3a3a3; --line:#161616;
+    --mono:ui-monospace,"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace;
+    --hh:30px; --sh:22px; --fh:22px;
+  }
+  @media (pointer:coarse) { :root { --hh:40px; --fh:30px; } }
   * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
-  html,body { margin:0; height:100%; background:var(--bg); color:var(--fg);
-    font:14px/1.35 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; overscroll-behavior:none; }
+  html,body { margin:0; height:100%; background:#0b0b0b; color:var(--fg);
+    font:12px/1.3 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; overflow:hidden; overscroll-behavior:none; }
   #gl { position:fixed; inset:0; width:100%; height:100%; touch-action:none; display:block; }
-  button,.btn { font:inherit; color:var(--fg); background:#262a33; border:1px solid var(--line); border-radius:8px;
-    padding:8px 12px; min-height:38px; cursor:pointer; user-select:none; -webkit-user-select:none; }
-  button:active,.btn:active { background:#323743; }
-  button.primary { background:var(--acc); color:#1a1405; border-color:var(--acc); font-weight:600; }
-  button:disabled { opacity:.45; }
-  #top { position:fixed; z-index:2; top:0; left:0; right:0; display:flex; gap:6px; flex-wrap:wrap; align-items:center;
-    padding:calc(env(safe-area-inset-top) + 8px) 10px 8px; pointer-events:none; }
-  #top > * { pointer-events:auto; }
-  #top .spacer { flex:1; pointer-events:none; }
-  #dragMode.on { background:var(--acc); color:#1a1405; border-color:var(--acc); }
-  #status { position:fixed; left:10px; top:calc(env(safe-area-inset-top) + 56px); color:var(--dim); font-size:12px;
-    pointer-events:none; text-shadow:0 1px 2px #000; max-width:70vw; }
-  #panel { position:fixed; left:0; right:0; bottom:0; max-height:48vh; overflow-y:auto; -webkit-overflow-scrolling:touch;
-    background:var(--panel); border-top:1px solid var(--line); padding:6px 12px calc(env(safe-area-inset-bottom) + 12px);
-    backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px); transition:transform .2s; }
-  #panel.hidden { transform:translateY(100%); }
+
+  /* ---- controls, Blender-style */
+  button,.btn { font:inherit; color:var(--fg); background:var(--field); border:1px solid var(--line); border-radius:4px;
+    padding:0 10px; height:var(--fh); line-height:calc(var(--fh) - 2px); cursor:pointer; user-select:none; -webkit-user-select:none;
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.06); white-space:nowrap; }
+  button:active,.btn:active { background:var(--sel); }
+  button.primary { background:var(--sel); }
+  button:disabled { opacity:.4; }
+  .seg { display:flex; margin:4px 0; border:1px solid var(--line); border-radius:4px; overflow:hidden; }
+  .seg button { flex:1; border:none; border-radius:0; background:var(--field); padding:0 4px; min-width:0; box-shadow:none;
+    overflow:hidden; text-overflow:ellipsis; }
+  .seg button + button { border-left:1px solid var(--line); }
+  .seg button.on { background:var(--sel); color:#fff; }
+  @media (hover:hover) {
+    button:hover,.btn:hover,.seg button:hover { background:var(--field-hi); }
+    button.primary:hover,.seg button.on:hover { background:#5680c2; }
+    input[type=range]:hover { filter:brightness(1.12); }
+  }
+  input[type=range] { -webkit-appearance:none; appearance:none; width:100%; height:var(--fh); margin:0; border-radius:4px;
+    border:1px solid var(--line); cursor:ew-resize;
+    background:linear-gradient(to right, var(--sel) var(--p,0%), var(--field) var(--p,0%)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance:none; width:1px; height:var(--fh); background:transparent; }
+  input[type=range]::-moz-range-thumb { width:0; height:0; border:0; background:transparent; }
+  input[type=range]:focus { outline:none; }
+  .ctl { display:grid; grid-template-columns:38% 1fr; align-items:center; gap:0 8px; margin:2px 0; }
+  .ctl input { grid-column:2; grid-row:1; }
+  .ctl label { color:var(--dim); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .ctl output { grid-column:2; grid-row:1; text-align:center; pointer-events:none; font-variant-numeric:tabular-nums;
+    text-shadow:0 1px 1px rgba(0,0,0,.5); }
+  .segLabel { color:var(--dim); margin:6px 0 0; }
+  .row { display:flex; gap:2px; align-items:center; margin:4px 0; }
+  .row button { flex:1; min-width:0; }
+
+  /* ---- top bar and status bar */
+  #top { position:fixed; z-index:3; top:0; left:0; right:0; display:flex; gap:4px; align-items:center;
+    height:calc(env(safe-area-inset-top) + var(--hh)); padding:env(safe-area-inset-top) 6px 0; background:var(--chrome);
+    border-bottom:1px solid #000; }
+  #top .spacer, #statusbar .spacer { flex:1; }
+  #top .seg { margin:0; }
+  #top .seg button { flex:none; padding:0 10px; }
+  .brand { display:flex; align-items:center; gap:6px; padding:0 8px 0 2px; color:var(--fg); font-weight:600; letter-spacing:.02em; }
+  .brand svg { width:16px; height:16px; }
+  #togglePanel .narrow { display:none; }
+  @media (max-width:640px) { #togglePanel .wide { display:none; } #togglePanel .narrow { display:inline; } }
+  @media (max-width:560px) { .brand span { display:none; } #top .seg button, button, .btn { padding:0 8px; } }
+  #statusbar { position:fixed; z-index:3; left:0; right:0; bottom:0; display:flex; gap:12px; align-items:center;
+    height:calc(env(safe-area-inset-bottom) + var(--sh)); padding:0 8px env(safe-area-inset-bottom); background:var(--chrome);
+    border-top:1px solid #000; color:var(--dim); font-size:11px; white-space:nowrap; overflow:hidden; }
+  #status { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #keys { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  #keys b { color:var(--fg); font-weight:500; }
+  @media (max-width:560px) { #statusbar { gap:8px; font-size:10px; } #status { max-width:32%; } }
+
+  /* ---- properties sidebar */
+  #panel { position:fixed; z-index:2; left:0; right:0; bottom:calc(env(safe-area-inset-bottom) + var(--sh)); max-height:48vh;
+    overflow-y:auto; -webkit-overflow-scrolling:touch; background:var(--region); border-top:1px solid #000;
+    padding:4px 4px 8px; transition:transform .2s; scrollbar-width:thin; scrollbar-color:#555 transparent; }
+  #panel.hidden { transform:translateY(calc(100% + var(--sh) + 40px)); }
   @media (min-width:820px) and (orientation:landscape) {
-    #panel { left:auto; top:0; width:340px; max-height:none; border-top:none; border-left:1px solid var(--line);
-      padding-top:calc(env(safe-area-inset-top) + 56px); }
+    #panel { left:auto; top:calc(env(safe-area-inset-top) + var(--hh)); width:320px; max-height:none; border-top:none;
+      border-left:1px solid #000; }
     #panel.hidden { transform:translateX(100%); }
   }
-  section { padding:8px 0; border-bottom:1px solid var(--line); }
-  section:last-child { border-bottom:none; }
-  h3 { margin:4px 0 8px; font-size:12px; letter-spacing:.08em; text-transform:uppercase; color:var(--dim); }
-  .ctl { display:grid; grid-template-columns:92px 1fr 58px; align-items:center; gap:8px; margin:4px 0; }
-  .ctl label { color:var(--dim); font-size:13px; }
-  .ctl output { text-align:right; font-variant-numeric:tabular-nums; font-size:12px; color:var(--fg); }
-  input[type=range] { width:100%; height:30px; margin:0; accent-color:var(--acc); }
-  .seg { display:flex; margin:6px 0; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
-  .seg button { flex:1; border:none; border-radius:0; background:transparent; padding:7px 4px; min-height:34px; font-size:13px; }
-  .seg button + button { border-left:1px solid var(--line); }
-  .seg button.on { background:var(--acc); color:#1a1405; font-weight:600; }
-  .segLabel { color:var(--dim); font-size:12px; margin-top:6px; }
-  .row { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin:6px 0; }
-  .row button { flex:1; }
-  video#vid { width:100%; max-height:28vh; background:#000; border-radius:6px; }
-  #mem { color:var(--dim); font-size:12px; }
-  #mem.warn { color:#ff7a6b; }
-  progress { width:100%; height:8px; accent-color:var(--acc); }
-  #hint { position:fixed; left:50%; top:45%; transform:translate(-50%,-50%); color:var(--dim); text-align:center; pointer-events:none; }
+  details { background:var(--box); border-radius:4px; margin:0 0 3px; }
+  summary { list-style:none; display:flex; align-items:center; gap:6px; height:26px; padding:0 8px; cursor:pointer;
+    background:var(--boxhead); border-radius:4px; font-weight:500; user-select:none; -webkit-user-select:none; }
+  details[open] > summary { border-radius:4px 4px 0 0; }
+  summary::-webkit-details-marker { display:none; }
+  summary::before { content:''; border:4px solid transparent; border-left:5px solid var(--dim); border-right:0;
+    transition:transform .1s; transform-origin:30% 50%; }
+  details[open] > summary::before { transform:rotate(90deg); }
+  .body { padding:4px 8px 8px; }
+  video#vid { width:100%; max-height:28vh; background:#000; border:1px solid var(--line); display:block; margin:4px 0; }
+  #mem { color:var(--dim); font:11px var(--mono); margin:6px 0 2px; }
+  #mem.warn { color:#ff6b5e; }
+  progress { -webkit-appearance:none; appearance:none; width:100%; height:4px; border:none; background:var(--field); }
+  progress::-webkit-progress-bar { background:var(--field); }
+  progress::-webkit-progress-value { background:var(--sel); }
+  progress::-moz-progress-bar { background:var(--sel); }
+
+  /* ---- viewport overlays, medical-viewer style */
+  #ovl { position:fixed; inset:0; width:100%; height:100%; z-index:1; pointer-events:none; }
+  .pane { position:fixed; z-index:1; pointer-events:none; display:none; }
+  .pane.on { display:block; }
+  .p2 .corner { top:4px; }
+  .p2 .plabel { left:8px; }
+  .p2 .pinfo { right:10px; text-align:right; }
+  #p3d.small #cTR, #p3d.small #cBR { display:none; }
+  #p3d.small #cTL { max-width:calc(100% - 80px); }
+  #p3d.small #gizmo { transform:scale(.7); transform-origin:top right; }
+  .corner { position:absolute; font:11px/1.45 var(--mono); color:#cfcfcf; text-shadow:0 0 2px #000, 0 1px 1px #000;
+    white-space:pre; letter-spacing:.02em; }
+  .corner .k { color:#7d7d7d; }
+  .corner .a { color:var(--act); }
+  .corner .hl { color:#f2e14c; }
+  #cTL { left:10px; top:8px; max-width:calc(100% - 140px); overflow:hidden; text-overflow:ellipsis; }
+  #cTR { right:10px; top:104px; text-align:right; }
+  #cBL { left:10px; bottom:8px; }
+  #cBR { right:10px; bottom:8px; text-align:right; }
+  #gizmo { position:absolute; right:6px; top:6px; width:92px; height:92px; pointer-events:auto; cursor:pointer; border-radius:50%; }
+  @media (max-width:520px) { .corner { font-size:9.5px; } #cTR { top:96px; } }
+  #hint { position:absolute; left:50%; top:45%; transform:translate(-50%,-50%); color:var(--dim); font:11px var(--mono);
+    text-align:center; letter-spacing:.04em; }
 </style>
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div id="hint"></div>
+
+<canvas id="ovl"></canvas>
+<div class="pane" id="p3d">
+  <div class="corner" id="cTL"></div>
+  <div class="corner" id="cTR"></div>
+  <div class="corner" id="cBL"></div>
+  <div class="corner" id="cBR"></div>
+  <canvas id="gizmo" title="Click an axis to view along it, or the centre to reset the view"></canvas>
+  <div id="hint"></div>
+</div>
+<div class="pane p2" id="pxy"><div class="corner plabel"></div><div class="corner pinfo"></div></div>
+<div class="pane p2" id="pxt"><div class="corner plabel"></div><div class="corner pinfo"></div></div>
+<div class="pane p2" id="pyt"><div class="corner plabel"></div><div class="corner pinfo"></div></div>
 
 <div id="top">
-  <label class="btn">Open video<input type="file" id="file" accept="video/*" hidden></label>
+  <span class="brand"><svg viewBox="0 0 16 16" fill="none" stroke-width="1.3" stroke-linejoin="round">
+    <path d="M8 1.5 14 5v6l-6 3.5L2 11V5z" stroke="#a3a3a3"/><path d="M2 5l6 3.5L14 5M8 8.5v6" stroke="#a3a3a3"/>
+    <path d="M2 8.2l6 3.4 6-3.4" stroke="#ffa033"/></svg><span>Video Volume</span></span>
+  <label class="btn">Open…<input type="file" id="file" accept="video/*" hidden></label>
   <button id="demo">Demo</button>
   <span class="spacer"></span>
-  <button id="dragMode" title="Drag on the view to move the plane instead of orbiting">Drag: orbit</button>
-  <button id="togglePanel">Controls</button>
+  <div class="seg" data-key="layout" title="Viewport layout (double-click or double-tap a pane to maximize it)">
+    <button data-v="0">3D</button><button data-v="1">2×2</button>
+  </div>
+  <div class="seg" data-key="drag" title="What dragging on the view does">
+    <button data-v="0">Orbit</button><button data-v="1">Slice</button>
+  </div>
+  <button id="togglePanel" title="Toggle properties (N)"><span class="wide">Properties</span><span class="narrow">☰</span></button>
 </div>
-<div id="status"></div>
+
+<div id="statusbar">
+  <span id="status"></span><span class="spacer"></span>
+  <span id="keys"></span>
+</div>
 
 <div id="panel">
-  <section id="srcSec" hidden>
-    <h3>Source</h3>
+  <details id="srcSec" open hidden>
+    <summary>Source</summary>
+    <div class="body">
     <video id="vid" controls playsinline muted preload="auto"></video>
     <div class="row">
       <button id="setStart">Set start</button>
@@ -82,16 +176,19 @@
     <div id="mem"></div>
     <div class="row"><button id="build" class="primary">Build volume</button></div>
     <progress id="prog" max="1" value="0" hidden></progress>
-  </section>
+    </div>
+  </details>
 
-  <section>
-    <h3>Render</h3>
+  <details open>
+    <summary>Render</summary>
+    <div class="body">
     <div class="segLabel">Mode</div>
-    <div class="seg" data-key="mode"><button data-v="0">Volume</button><button data-v="1">Max intensity</button><button data-v="2">Jello</button></div>
+    <div class="seg" data-key="mode"><button data-v="0">Volume</button><button data-v="1" title="Maximum intensity projection">MIP</button><button data-v="2">Jello</button></div>
     <div class="segLabel">Opacity from</div>
     <div class="seg" data-key="alphaSrc"><button data-v="2">Motion</button><button data-v="0">Bright</button><button data-v="1">Dark</button><button data-v="3">Uniform</button></div>
-    <div class="segLabel">Color</div>
-    <div class="seg" data-key="colorMode"><button data-v="0">Video</button><button data-v="1">Time hue</button></div>
+    <div class="segLabel">Colour map</div>
+    <div class="seg" data-key="colorMode"><button data-v="0">Video</button><button data-v="1">Time hue</button><button data-v="2">Gray</button><button data-v="3">Hot iron</button></div>
+    <div style="height:6px"></div>
     <div class="ctl"><label>Threshold</label><input type="range" data-key="threshold" min="0" max="1" step="0.01"><output></output></div>
     <div class="ctl"><label>Softness</label><input type="range" data-key="soft" min="0" max="1" step="0.01"><output></output></div>
     <div class="ctl"><label>Density</label><input type="range" data-key="density" data-log min="-2" max="2" step="0.01"><output></output></div>
@@ -99,33 +196,39 @@
     <div class="ctl"><label>Time length</label><input type="range" data-key="depthScale" min="0.2" max="4" step="0.01"><output></output></div>
     <div class="ctl"><label>Quality</label><input type="range" data-key="steps" min="32" max="512" step="8"><output></output></div>
     <div class="ctl"><label>Resolution</label><input type="range" data-key="res" min="0.25" max="1" step="0.05"><output></output></div>
-  </section>
+    </div>
+  </details>
 
-  <section id="jelloSec" hidden>
-    <h3>Jello</h3>
+  <details id="jelloSec" open hidden>
+    <summary>Jello</summary>
+    <div class="body">
     <div class="segLabel">Video content</div>
     <div class="seg" data-key="dye"><button data-v="0">Solid</button><button data-v="1">Dyed gel</button></div>
     <div class="segLabel">Gel</div>
     <div class="seg" data-key="gel"><button data-v="0">Clear</button><button data-v="1">Cherry</button><button data-v="2">Lime</button><button data-v="3">Blue</button></div>
+    <div style="height:6px"></div>
     <div class="ctl"><label>Wobbliness</label><input type="range" data-key="jiggle" min="0" max="1" step="0.01"><output></output></div>
     <div class="ctl"><label>Refraction</label><input type="range" data-key="ior" min="1" max="1.6" step="0.01"><output></output></div>
     <div class="row"><button id="wobble">Wobble</button></div>
-  </section>
+    </div>
+  </details>
 
-  <section>
-    <h3>Plane</h3>
+  <details open>
+    <summary>Slice plane</summary>
+    <div class="body">
     <div class="seg" data-key="planeMode"><button data-v="0">Off</button><button data-v="1">Cut volume</button><button data-v="2">Slice only</button></div>
     <div class="row">
-      <button data-preset="xy">Frame (XY)</button>
-      <button data-preset="xt">Row (XT)</button>
-      <button data-preset="yt">Column (YT)</button>
+      <button data-preset="xy" title="One frame">Frame XY</button>
+      <button data-preset="xt" title="One row over time">Row XT</button>
+      <button data-preset="yt" title="One column over time">Column YT</button>
     </div>
     <div class="ctl"><label>Position</label><input type="range" data-key="offset" min="-1" max="1" step="0.002"><output id="offsetOut"></output></div>
     <div class="ctl"><label>Azimuth</label><input type="range" data-key="theta" min="-180" max="180" step="1"><output></output></div>
     <div class="ctl"><label>Elevation</label><input type="range" data-key="phi" min="-90" max="90" step="1"><output></output></div>
     <div class="ctl"><label>Ghost vol.</label><input type="range" data-key="ghost" min="0" max="1" step="0.01"><output></output></div>
     <div class="row"><button id="sweep">▶ Sweep plane</button><button id="resetView">Reset view</button></div>
-  </section>
+    </div>
+  </details>
 </div>
 
 <script>
@@ -141,6 +244,9 @@ const state = {
   steps: coarse ? 160 : 256, res: 1,
   planeMode: 0, theta: 180, phi: 0, offset: -1, ghost: 0.15,
   gel: 1, jiggle: 0.6, ior: 1.35, dye: 0,
+  drag: 0,                  // 0: dragging the view orbits, 1: it moves the plane
+  layout: 0,                // 0: 3D, 1: 2×2, 2–4: a single maximized frame / row / column view
+  cur: [0.5, 0.5, 0.5],     // crosshair shared by the slice views, in texture coordinates (x, y, time)
 };
 let volume = null;          // { w, h, d, data, t0, t1, label }
 let gl, prog, vao, volTex, dummyTex, U = {}, maxTex3D = 256;
@@ -163,7 +269,10 @@ precision highp sampler3D;
 in vec2 vNdc; out vec4 outColor;
 uniform sampler3D uVol;
 uniform vec3 uCamPos, uCamRight, uCamUp, uCamFwd, uHalf, uNormal;
-uniform vec2 uTan, uShift;
+uniform vec2 uTan;
+uniform int uView;        // 0: 3D, 1: frame (XY), 2: row (XT), 3: column (YT)
+uniform vec4 uImg;        // 2D views: image rect in viewport NDC (x0, y0, x1, y1)
+uniform vec3 uCur;        // 2D views: crosshair position in texture coordinates
 uniform int uMode, uAlphaSrc, uColorMode, uPlaneMode, uSteps, uHasVol;
 uniform float uThresh, uSoft, uDensity, uBright, uOffset, uGhost, uPixel;
 uniform vec4 uWob;        // jello deformation: shear x, shear z, squash, twist
@@ -172,7 +281,7 @@ uniform float uIor;
 uniform int uDye;         // 1: voxels tint the light passing through them instead of blocking it
 
 const vec3 LUMA = vec3(0.299, 0.587, 0.114);
-const vec3 ACCENT = vec3(1.0, 0.75, 0.24);
+const vec3 ACCENT = vec3(1.0, 0.63, 0.2);    // active-object orange
 const vec3 KEY = vec3(-0.4784, 0.7654, 0.4305);   // key light direction (normalized)
 const vec3 FILL = vec3(0.7454, 0.2981, -0.5963);
 
@@ -193,26 +302,36 @@ float transfer(vec4 s) {
           : uAlphaSrc == 2 ? s.a : 1.0;
   return smoothstep(uThresh, uThresh + uSoft + 1e-4, v);
 }
-vec3 shade(vec4 s, vec3 uvw) {
-  vec3 c = uColorMode == 0 ? s.rgb : hue(uvw.z * 0.8) * (0.3 + 0.7 * dot(s.rgb, LUMA));
-  return c * uBright;
+// Colour map: 0 video, 1 time hue, 2 grayscale, 3 hot iron.
+vec3 colorize(vec4 s, vec3 uvw) {
+  float l = dot(s.rgb, LUMA);
+  return uColorMode == 0 ? s.rgb
+       : uColorMode == 1 ? hue(uvw.z * 0.8) * (0.3 + 0.7 * l)
+       : uColorMode == 2 ? vec3(l)
+       : clamp(vec3(3.0 * l, 3.0 * l - 1.0, 3.0 * l - 2.0), 0.0, 1.0);
 }
+vec3 shade(vec4 s, vec3 uvw) { return colorize(s, uvw) * uBright; }
 // Distance to the nearest box edge (second-smallest distance to a face).
 float edgeDist(vec3 p) {
   vec3 d = uHalf - abs(p);
   float mx = max(d.x, max(d.y, d.z)), mn = min(d.x, min(d.y, d.z));
   return d.x + d.y + d.z - mx - mn;
 }
+// Grey wireframe, except the three edges leaving the first frame's bottom-left corner, which take the axis colours.
+const vec3 AX_X = vec3(0.91, 0.25, 0.31), AX_Y = vec3(0.49, 0.73, 0.15), AX_T = vec3(0.23, 0.55, 0.91);
 vec3 edgeColor(vec3 p) {
   vec3 d = uHalf - abs(p);
-  return (d.z > d.x && d.z > d.y) ? vec3(0.95, 0.55, 0.2) : vec3(0.45, 0.5, 0.6); // time-parallel edges in orange
+  if (d.x > d.y && d.x > d.z) return (p.y < 0.0 && p.z > 0.0) ? AX_X : vec3(0.5);
+  if (d.y > d.z) return (p.x < 0.0 && p.z > 0.0) ? AX_Y : vec3(0.5);
+  return (p.x < 0.0 && p.y < 0.0) ? AX_T : vec3(0.5);
 }
 float keepSide(vec3 p) { return dot(uNormal, p / uHalf) >= uOffset ? 1.0 : 0.0; }
 
 vec3 planeColor(vec3 p, float t) {
-  vec3 c = uHasVol == 1 ? texture(uVol, toUvw(p)).rgb : vec3(0.18);
-  vec3 d = uHalf - abs(p);
-  float w = uPixel * t * 2.0;
+  vec3 uvw = toUvw(p);
+  vec3 c = uHasVol == 1 ? colorize(texture(uVol, uvw), uvw) : vec3(0.18);
+  vec3 d = uHalf - abs(p) + 1e3 * step(0.999, abs(uNormal));   // a plane lying on a box face only outlines its rim
+  float w = uPixel * t * 2.5;
   return mix(c, ACCENT, 1.0 - smoothstep(0.4 * w, w, min(d.x, min(d.y, d.z))));
 }
 
@@ -249,7 +368,24 @@ vec3 env(vec3 d) {
   c += vec3(0.5, 0.6, 0.8) * smoothstep(0.95, 0.98, dot(d, FILL));
   return c;
 }
-vec3 bgDir(vec3 d) { return vec3(0.058, 0.063, 0.078) + 0.03 * d.y; }
+vec3 bgDir(vec3 d) { return vec3(0.075 + 0.035 * d.y); }
+// Viewport background: dark gradient with a floor grid under the volume and red X / blue T axis lines.
+vec3 viewBg(vec3 ro, vec3 rd, float ndcY) {
+  vec3 c = vec3(0.062 + 0.03 * ndcY);
+  float yF = -uHalf.y;
+  if (rd.y >= 0.0 || ro.y <= yF) return c;
+  float t = (yF - ro.y) / rd.y;
+  vec2 q = (ro + rd * t).xz;
+  float w = uPixel * t / max(abs(rd.y), 0.15);                 // footprint of a pixel on the floor
+  float fade = exp(-0.12 * t * t) * smoothstep(0.02, 0.2, -rd.y);
+  vec2 g1 = abs(fract(q * 4.0 + 0.5) - 0.5) / 4.0, g2 = abs(fract(q + 0.5) - 0.5);
+  float minor = 1.0 - smoothstep(0.0, w, min(g1.x, g1.y));
+  float major = 1.0 - smoothstep(0.0, w * 1.2, min(g2.x, g2.y));
+  c = mix(c, vec3(0.16), fade * max(0.45 * minor, 0.8 * major));
+  c = mix(c, AX_X * 0.7, fade * (1.0 - smoothstep(0.0, w * 1.2, abs(q.y))));
+  c = mix(c, AX_T * 0.7, fade * (1.0 - smoothstep(0.0, w * 1.2, abs(q.x))));
+  return c;
+}
 float sdBox2(vec2 p, vec2 b) { vec2 q = abs(p) - b; return length(max(q, 0.0)) + min(max(q.x, q.y), 0.0); }
 // The plate the jello sits on, or the background if the ray misses it.
 vec3 backdrop(vec3 ro, vec3 rd, vec3 bg) {
@@ -332,11 +468,20 @@ vec3 jello(vec3 ro, vec3 rd, vec3 bg, float jitter) {
   return mix(L, refl, F) + spec;
 }
 
+// Orthogonal slice views. Frames read top-down; time runs down in the row view and right in the column view.
+vec3 slice2D() {
+  vec2 f = (vNdc - uImg.xy) / (uImg.zw - uImg.xy);
+  if (any(lessThan(f, vec2(0.0))) || any(greaterThan(f, vec2(1.0)))) return vec3(0.0);
+  float fd = 1.0 - f.y;
+  vec3 uvw = uView == 1 ? vec3(f.x, fd, uCur.z) : uView == 2 ? vec3(f.x, uCur.y, fd) : vec3(uCur.x, fd, f.x);
+  return uHasVol == 1 ? colorize(texture(uVol, uvw), uvw) : vec3(0.08);
+}
+
 void main() {
-  vec2 ndc = vNdc - uShift;  // re-centre the view in the area not covered by the panel
-  vec3 rd = normalize(uCamFwd + ndc.x * uTan.x * uCamRight + ndc.y * uTan.y * uCamUp);
+  if (uView > 0) { outColor = vec4(slice2D(), 1.0); return; }
+  vec3 rd = normalize(uCamFwd + vNdc.x * uTan.x * uCamRight + vNdc.y * uTan.y * uCamUp);
   vec3 ro = uCamPos;
-  vec3 bg = vec3(0.058, 0.063, 0.078) + 0.03 * vNdc.y;
+  vec3 bg = viewBg(ro, rd, vNdc.y);
   float jitter = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
   if (uMode == 2) { outColor = vec4(jello(ro, rd, bg, jitter), 1.0); return; }
   vec2 th = boxHit(ro, rd, uHalf);
@@ -344,8 +489,8 @@ void main() {
   float tN = max(th.x, 0.0), tF = th.y;
 
   vec3 pF = ro + rd * tF, pN = ro + rd * tN;
-  float wF = uPixel * tF * 1.5, wN = uPixel * tN * 1.5;
-  vec3 back = mix(bg, edgeColor(pF), 0.5 * (1.0 - smoothstep(0.4 * wF, wF, edgeDist(pF))));
+  float wF = uPixel * tF * 1.2, wN = uPixel * tN * 1.2;
+  vec3 back = mix(bg, edgeColor(pF), 0.45 * (1.0 - smoothstep(0.4 * wF, wF, edgeDist(pF))));
 
   vec3 acc = vec3(0.0); float a = 0.0;
   float eN = 0.8 * (1.0 - smoothstep(0.4 * wN, wN, edgeDist(pN)));
@@ -355,7 +500,7 @@ void main() {
   vec3 nW = uNormal / uHalf;
   float den = dot(nW, rd);
   float tP = abs(den) > 1e-6 ? (uOffset - dot(nW, ro)) / den : -1.0;
-  bool planeHit = uPlaneMode > 0 && tP >= tN && tP <= tF;
+  bool planeHit = uPlaneMode > 0 && tP >= tN - 1e-4 && tP <= tF + 1e-4;   // tolerance: plane may lie on a face
   bool cut = uPlaneMode == 1;
   float dens = uDensity * (uPlaneMode == 2 ? uGhost : 1.0);
   bool doVol = uHasVol == 1 && dens > 0.0;
@@ -471,19 +616,56 @@ function planeNormal() {
   const th = state.theta * Math.PI / 180, ph = state.phi * Math.PI / 180;
   return [Math.sin(th) * Math.cos(ph), Math.sin(ph), Math.cos(th) * Math.cos(ph)];
 }
-// Fraction of the canvas covered by the panel, as [x, y]: right-side panel on wide screens, bottom sheet otherwise.
-function panelCover() {
-  const p = $('panel'), r = p.getBoundingClientRect();
-  if (p.classList.contains('hidden')) return [0, 0];
-  if (r.top <= 1) return [Math.max(0, innerWidth - r.left) / innerWidth, 0];
-  return [0, Math.max(0, innerHeight - r.top) / innerHeight];
+// ---- viewport layout
+// The area between the top bar, the status bar and the panel (right-side on wide screens, bottom sheet otherwise).
+const sideMQ = matchMedia('(min-width:820px) and (orientation:landscape)');
+function viewArea() {
+  const top = $('top').getBoundingClientRect().bottom;
+  let bottom = $('statusbar').getBoundingClientRect().top, right = innerWidth;
+  const p = $('panel');
+  if (!p.classList.contains('hidden')) {
+    const r = p.getBoundingClientRect();
+    if (sideMQ.matches) right = Math.min(right, r.left); else bottom = Math.min(bottom, r.top);
+  }
+  return { x: 0, y: top, w: Math.max(1, right), h: Math.max(1, bottom - top) };
 }
+const LAYOUT_KIND = ['3d', '3d', 'xy', 'xt', 'yt'];
+function panes() {
+  const A = viewArea();
+  if (state.layout !== 1) return [{ kind: LAYOUT_KIND[state.layout], legend: true, ...A }];
+  const g = 2, w1 = Math.floor((A.w - g) / 2), h1 = Math.floor((A.h - g) / 2), w2 = A.w - w1 - g, h2 = A.h - h1 - g;
+  return [
+    { kind: '3d', legend: true, x: A.x, y: A.y, w: w1, h: h1 },
+    { kind: 'xy', x: A.x + w1 + g, y: A.y, w: w2, h: h1 },
+    { kind: 'xt', x: A.x, y: A.y + h1 + g, w: w1, h: h2 },
+    { kind: 'yt', x: A.x + w1 + g, y: A.y + h1 + g, w: w2, h: h2 },
+  ];
+}
+const pane3d = () => panes().find(p => p.kind === '3d') || viewArea();
+const paneAt = (x, y) => panes().find(p => x >= p.x && x < p.x + p.w && y >= p.y && y < p.y + p.h);
+
+// Slice views. Each shows two texture axes (h across, v down) at a fixed position on the third.
+// Axis 0: x (pixels), 1: y (pixels), 2: time. Colours follow the axis normal to the slice, as in the gizmo.
+const AXIS = [{ c: '#e8404f', l: 'X' }, { c: '#7dbb27', l: 'Y' }, { c: '#3b8ce8', l: 'T' }];
+const SLICE = {
+  xy: { name: 'FRAME', tag: 'XY', h: 0, v: 1, fixed: 2, view: 1 },
+  xt: { name: 'ROW', tag: 'XT', h: 0, v: 2, fixed: 1, view: 2 },
+  yt: { name: 'COLUMN', tag: 'YT', h: 2, v: 1, fixed: 0, view: 3 },
+};
+const M2 = { l: 42, t: 22, b: 22 };
+function imgRect(p) {
+  const S = SLICE[p.kind], E = halfExtents().map(x => 2 * x), r = p.legend ? 56 : 12;
+  const aw = Math.max(1, p.w - M2.l - r), ah = Math.max(1, p.h - M2.t - M2.b);
+  const s = Math.min(aw / E[S.h], ah / E[S.v]), w = E[S.h] * s, h = E[S.v] * s;
+  return { x: p.x + M2.l + (aw - w) / 2, y: p.y + M2.t + (ah - h) / 2, w, h };
+}
+const volDims = () => volume ? [volume.w, volume.h, volume.d] : [2, 2, 2];
+const cursorIndex = i => Math.round(state.cur[i] * (volDims()[i] - 1));
+
 function fitDistance() {
-  const r = Math.hypot(...halfExtents());
-  const [cx, cy] = panelCover();
-  const aspect = canvas.clientWidth * (1 - cx) / Math.max(1, canvas.clientHeight * (1 - cy));
-  const tanV = Math.tan(FOV / 2) * (1 - cy);
-  const fovMin = 2 * Math.atan(Math.min(tanV, tanV * aspect));
+  const r = Math.hypot(...halfExtents()), P = pane3d();
+  const tanV = Math.tan(FOV / 2);
+  const fovMin = 2 * Math.atan(Math.min(tanV, tanV * P.w / P.h));
   return r / Math.sin(fovMin / 2) * 1.02;
 }
 
@@ -522,9 +704,9 @@ function kick(dv) {
 }
 // Tap on the jello: push it away from the camera at the point that was hit.
 function poke(clientX, clientY) {
-  const rect = canvas.getBoundingClientRect(), [cx, cy] = panelCover();
-  const nx = (clientX - rect.left) / rect.width * 2 - 1 + cx, ny = 1 - (clientY - rect.top) / rect.height * 2 - cy;
-  const { pos, fwd, right, up } = camera(), tanH = Math.tan(FOV / 2), aspect = rect.width / rect.height;
+  const P = pane3d();
+  const nx = (clientX - P.x) / P.w * 2 - 1, ny = 1 - (clientY - P.y) / P.h * 2;
+  const { pos, fwd, right, up } = camera(), tanH = Math.tan(FOV / 2), aspect = P.w / P.h;
   const rd = norm([0, 1, 2].map(i => fwd[i] + nx * tanH * aspect * right[i] + ny * tanH * up[i]));
   const H = halfExtents();
   let tN = -Infinity, tF = Infinity;
@@ -565,7 +747,10 @@ function render() {
   const scale = Math.min(window.devicePixelRatio || 1, coarse ? 1.5 : 2) * state.res * (interacting ? 0.5 : 1);
   const W = Math.max(1, Math.round(canvas.clientWidth * scale)), H = Math.max(1, Math.round(canvas.clientHeight * scale));
   if (canvas.width !== W || canvas.height !== H) { canvas.width = W; canvas.height = H; }
+  gl.disable(gl.SCISSOR_TEST);
   gl.viewport(0, 0, W, H);
+  gl.clearColor(0, 0, 0, 1);
+  gl.clear(gl.COLOR_BUFFER_BIT);
   gl.useProgram(prog);
 
   const { pos, fwd, right, up } = camera();
@@ -575,11 +760,8 @@ function render() {
 
   gl.uniform3fv(U.uCamPos, pos); gl.uniform3fv(U.uCamFwd, fwd);
   gl.uniform3fv(U.uCamRight, right); gl.uniform3fv(U.uCamUp, up);
-  gl.uniform2f(U.uTan, tanH * W / H, tanH);
-  const [cx, cy] = panelCover();
-  gl.uniform2f(U.uShift, -cx, cy);
-  gl.uniform1f(U.uPixel, 2 * tanH / H);
   gl.uniform3fv(U.uHalf, halfExtents());
+  gl.uniform3fv(U.uCur, state.cur);
   gl.uniform3fv(U.uNormal, n);
   gl.uniform1f(U.uOffset, state.offset * extent);
   gl.uniform1i(U.uMode, state.mode);
@@ -601,8 +783,256 @@ function render() {
   gl.bindTexture(gl.TEXTURE_3D, volTex || dummyTex);
   gl.uniform1i(U.uVol, 0);
   gl.bindVertexArray(vao);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  gl.enable(gl.SCISSOR_TEST);
+  const list = panes(), sx = W / canvas.clientWidth;
+  for (const p of list) {
+    const vx = Math.round(p.x * sx), vy = Math.round((canvas.clientHeight - p.y - p.h) * sx);
+    const vw = Math.max(1, Math.round(p.w * sx)), vh = Math.max(1, Math.round(p.h * sx));
+    gl.viewport(vx, vy, vw, vh); gl.scissor(vx, vy, vw, vh);
+    if (p.kind === '3d') {
+      gl.uniform1i(U.uView, 0);
+      gl.uniform2f(U.uTan, tanH * vw / vh, tanH);
+      gl.uniform1f(U.uPixel, 2 * tanH / vh);
+    } else {
+      const r = imgRect(p);
+      gl.uniform1i(U.uView, SLICE[p.kind].view);
+      gl.uniform4f(U.uImg, (r.x - p.x) / p.w * 2 - 1, 1 - (r.y + r.h - p.y) / p.h * 2,
+                           (r.x + r.w - p.x) / p.w * 2 - 1, 1 - (r.y - p.y) / p.h * 2);
+    }
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  drawOverlay({ pos, right, up, fwd, tanH }, list);
 }
+
+// ---------------------------------------------------------------- viewport overlay
+// Corner readouts in the style of a medical image viewer, and a Blender-style axis gizmo.
+const gizmo = $('gizmo'), gctx = gizmo.getContext('2d');
+const AXES = [
+  { v: [1, 0, 0], c: '#e8404f', l: 'X' },
+  { v: [0, 1, 0], c: '#7dbb27', l: 'Y' },
+  { v: [0, 0, -1], c: '#3b8ce8', l: 'T' },   // time runs from +z (first frame) to -z
+];
+let gizmoEnds = [];
+const setText = (el, html) => { if (el.innerHTML !== html) el.innerHTML = html; };
+const k = s => `<span class="k">${s}</span>`;
+const pad = (v, n) => String(v).padStart(n);
+const deg = r => Math.round(r * 180 / Math.PI);
+const MONO = getComputedStyle(document.documentElement).getPropertyValue('--mono');
+
+const ovl = $('ovl'), octx = ovl.getContext('2d');
+const PANE_EL = { '3d': $('p3d'), xy: $('pxy'), xt: $('pxt'), yt: $('pyt') };
+const clamp01 = x => Math.max(0, Math.min(1, x));
+// JS copies of the shader's colour maps, for the legend.
+function lutColor(x) {
+  if (state.colorMode === 1) return [0, 4, 2].map(o => clamp01(Math.abs(((x * 0.8 * 6 + o) % 6 + 6) % 6 - 3) - 1));
+  if (state.colorMode === 2) return [x, x, x];
+  return [3 * x, 3 * x - 1, 3 * x - 2].map(clamp01);
+}
+const rgb = c => `rgb(${c.map(v => Math.round(v * 255)).join(',')})`;
+function niceStep(range, px, minPx) {
+  const raw = Math.abs(range) * minPx / Math.max(1, px), p = 10 ** Math.floor(Math.log10(raw));
+  return [1, 2, 5, 10].map(m => m * p).find(v => v >= raw);
+}
+// Axis i in display units: pixels for x and y, seconds for time.
+function axisRange(i) {
+  if (!volume) return [0, 1];
+  return i === 0 ? [0, volume.w] : i === 1 ? [0, volume.h] : [volume.t0, volume.t1];
+}
+function ruler(g, i, x0, y0, len, vertical) {
+  const [a, b] = axisRange(i), step = niceStep(b - a, len, vertical ? 34 : 56);
+  const dec = Math.max(0, -Math.floor(Math.log10(step) + 1e-9));
+  g.strokeStyle = '#555'; g.fillStyle = '#8c8c8c'; g.lineWidth = 1;
+  g.beginPath();
+  if (vertical) { g.moveTo(x0 + 0.5, y0); g.lineTo(x0 + 0.5, y0 + len); } else { g.moveTo(x0, y0 + 0.5); g.lineTo(x0 + len, y0 + 0.5); }
+  g.stroke();
+  g.textAlign = vertical ? 'right' : 'center'; g.textBaseline = vertical ? 'middle' : 'top';
+  for (let v = Math.ceil(a / step - 1e-9) * step; v <= b + 1e-9; v += step) {
+    const q = (v - a) / (b - a) * len;
+    for (let m = 1; m < 5; m++) {                 // minor ticks
+      const qm = q + m * step / 5 / (b - a) * len;
+      if (qm > len) break;
+      g.beginPath();
+      if (vertical) { g.moveTo(x0, Math.round(y0 + qm) + 0.5); g.lineTo(x0 - 2, Math.round(y0 + qm) + 0.5); }
+      else { g.moveTo(Math.round(x0 + qm) + 0.5, y0); g.lineTo(Math.round(x0 + qm) + 0.5, y0 + 2); }
+      g.stroke();
+    }
+    g.beginPath();
+    if (vertical) { g.moveTo(x0, Math.round(y0 + q) + 0.5); g.lineTo(x0 - 5, Math.round(y0 + q) + 0.5); }
+    else { g.moveTo(Math.round(x0 + q) + 0.5, y0); g.lineTo(Math.round(x0 + q) + 0.5, y0 + 5); }
+    g.stroke();
+    const label = v.toFixed(dec) + (i === 2 ? 's' : '');
+    if (vertical) g.fillText(label, x0 - 7, y0 + q); else g.fillText(label, x0 + q, y0 + 7);
+  }
+}
+function legend(g, p, x, top, bottom) {
+  const h = Math.min(160, bottom - top);
+  if (state.colorMode === 0 || !volume || h < 36) return;
+  const y = top + (bottom - top - h) / 2, w = 10;
+  const grad = g.createLinearGradient(0, y + h, 0, y);
+  for (let i = 0; i <= 16; i++) grad.addColorStop(i / 16, rgb(lutColor(i / 16)));
+  g.fillStyle = grad; g.fillRect(x, y, w, h);
+  g.strokeStyle = '#666'; g.lineWidth = 1; g.strokeRect(x - 0.5, y - 0.5, w + 1, h + 1);
+  const time = state.colorMode === 1, [a, b] = time ? [volume.t0, volume.t1] : [0, 1];
+  g.fillStyle = '#9a9a9a'; g.textAlign = 'right'; g.textBaseline = 'middle';
+  for (const f of [0, 0.5, 1]) {
+    g.fillRect(x - 3, Math.round(y + h - f * h), 3, 1);
+    g.fillText((a + f * (b - a)).toFixed(time ? 1 : 1) + (time ? 's' : ''), x - 5, y + h - f * h);
+  }
+  g.textAlign = 'center'; g.textBaseline = 'bottom';
+  g.fillText(time ? 'TIME' : 'LUMA', x + w / 2, y - 5);
+}
+function place(el, p) {
+  const v = p ? [p.x, p.y, p.w, p.h].map(n => n + 'px') : null;
+  el.classList.toggle('on', !!p);
+  if (!p) return;
+  const s = el.style;
+  if (s.left !== v[0]) s.left = v[0];
+  if (s.top !== v[1]) s.top = v[1];
+  if (s.width !== v[2]) s.width = v[2];
+  if (s.height !== v[3]) s.height = v[3];
+}
+
+function drawOverlay(cam, list) {
+  const dpr = devicePixelRatio || 1, OW = Math.round(innerWidth * dpr), OH = Math.round(innerHeight * dpr);
+  if (ovl.width !== OW || ovl.height !== OH) { ovl.width = OW; ovl.height = OH; }
+  const g = octx;
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, innerWidth, innerHeight);
+  g.font = '10px ' + MONO;
+  for (const kind in PANE_EL) place(PANE_EL[kind], list.find(p => p.kind === kind));
+  const quad = list.length > 1, H = halfExtents();
+
+  for (const p of list) {
+    g.save();
+    g.beginPath(); g.rect(p.x, p.y, p.w, p.h); g.clip();
+    if (p.kind === '3d') {
+      if (quad && volume && state.mode !== 2) {
+        // Outline the three slice planes at the crosshair.
+        const at = [(state.cur[0] - 0.5) * 2 * H[0], (0.5 - state.cur[1]) * 2 * H[1], (0.5 - state.cur[2]) * 2 * H[2]];
+        const proj = q => {
+          const d = q.map((v, i) => v - cam.pos[i]), dot = u => d[0] * u[0] + d[1] * u[1] + d[2] * u[2], z = dot(cam.fwd);
+          if (z < 0.01) return null;
+          return [p.x + (dot(cam.right) / z / (cam.tanH * p.w / p.h) + 1) / 2 * p.w, p.y + (1 - dot(cam.up) / z / cam.tanH) / 2 * p.h];
+        };
+        for (const fixed of [2, 1, 0]) {
+          const [a, b] = [0, 1, 2].filter(i => i !== fixed), pts = [];
+          for (const [sa, sb] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+            const q = at.slice(); q[a] = sa * H[a]; q[b] = sb * H[b]; pts.push(proj(q));
+          }
+          if (pts.some(x => !x)) continue;
+          g.strokeStyle = AXIS[fixed].c; g.globalAlpha = 0.85; g.lineWidth = 1.25;
+          g.beginPath(); pts.forEach(([x, y], i) => i ? g.lineTo(x, y) : g.moveTo(x, y)); g.closePath(); g.stroke();
+          g.globalAlpha = 1;
+        }
+      }
+      // Below the top-right readout, or just below the gizmo when the pane is too small for the readout.
+      const small = p.w < 380 || p.h < 300;
+      if (p.legend) legend(g, p, p.x + p.w - 24, p.y + (small ? 84 : innerWidth <= 520 ? 200 : 232), p.y + p.h - (small ? 14 : 72));
+    } else {
+      const S = SLICE[p.kind], r = imgRect(p);
+      g.strokeStyle = 'rgba(255,255,255,0.18)'; g.lineWidth = 1;
+      g.strokeRect(Math.round(r.x) - 0.5, Math.round(r.y) - 0.5, Math.round(r.w) + 1, Math.round(r.h) + 1);
+      if (volume) {
+        ruler(g, S.h, r.x, r.y + r.h + 3, r.w, false);
+        ruler(g, S.v, r.x - 3, r.y, r.h, true);
+        // Crosshair, with a gap at the centre so the voxel under it stays visible.
+        const cx = r.x + state.cur[S.h] * r.w, cy = r.y + state.cur[S.v] * r.h, gap = 7;
+        g.lineWidth = 1;
+        g.strokeStyle = AXIS[S.h].c;
+        g.beginPath(); g.moveTo(Math.round(cx) + 0.5, r.y); g.lineTo(Math.round(cx) + 0.5, cy - gap);
+        g.moveTo(Math.round(cx) + 0.5, cy + gap); g.lineTo(Math.round(cx) + 0.5, r.y + r.h); g.stroke();
+        g.strokeStyle = AXIS[S.v].c;
+        g.beginPath(); g.moveTo(r.x, Math.round(cy) + 0.5); g.lineTo(cx - gap, Math.round(cy) + 0.5);
+        g.moveTo(cx + gap, Math.round(cy) + 0.5); g.lineTo(r.x + r.w, Math.round(cy) + 0.5); g.stroke();
+      }
+      if (p.legend) legend(g, p, p.x + p.w - 22, p.y + M2.t + 14, p.y + p.h - M2.b - 6);
+      const el = PANE_EL[p.kind], n = volDims()[S.fixed], idx = cursorIndex(S.fixed);
+      setText(el.firstElementChild, `<span style="color:${AXIS[S.fixed].c}">■ ${S.name}</span> ${k(S.tag)}`);
+      setText(el.lastElementChild, !volume ? '' : S.fixed === 2
+        ? `${k('FR')} ${idx + 1}/${n}  ${k('t')} ${(volume.t0 + state.cur[2] * (volume.t1 - volume.t0)).toFixed(2)}s`
+        : `${k(S.fixed ? 'ROW' : 'COL')} ${idx + 1}/${n}`);
+    }
+    // Pane frame: the slice colour for slice views.
+    if (quad || p.kind !== '3d') {
+      g.strokeStyle = p.kind === '3d' ? '#3a3a3a' : AXIS[SLICE[p.kind].fixed].c;
+      g.globalAlpha = p.kind === '3d' ? 1 : 0.7; g.lineWidth = 1;
+      g.strokeRect(p.x + 0.5, p.y + 0.5, p.w - 1, p.h - 1);
+      g.globalAlpha = 1;
+    }
+    g.restore();
+  }
+
+  const p3 = list.find(p => p.kind === '3d');
+  if (!p3) return;
+  const small = p3.w < 380 || p3.h < 300;
+  $('p3d').classList.toggle('small', small);
+  const modes = ['VOLUME', 'MIP', 'JELLO'], opac = ['BRIGHT', 'DARK', 'MOTION', 'UNIFORM'], luts = ['VIDEO', 'T-HUE', 'GRAY', 'HOT'];
+  if (volume) {
+    const { w, h, d, t0, t1, label } = volume, mb = (w * h * d * 4 / 1048576).toFixed(1);
+    setText($('cTL'), `<span class="hl">${label.toUpperCase().replace(/[<&]/g, '')}</span>\n` +
+      `${k('DIM')} ${w}×${h}×${d}  ${k('MB')} ${mb}\n` +
+      `${k('T')}   ${t0.toFixed(2)}–${t1.toFixed(2)} s  ${k('F/S')} ${((d - 1) / Math.max(1e-6, t1 - t0)).toFixed(1)}`);
+  } else setText($('cTL'), k('NO VOLUME'));
+  setText($('cTR'), `<span class="a">${modes[state.mode]}</span>\n` +
+    `${k('OPAC')} ${opac[state.alphaSrc]}\n${k('LUT')} ${luts[state.colorMode]}\n` +
+    `${k('W')} ${state.soft.toFixed(2)} ${k('L')} ${state.threshold.toFixed(2)}\n${k('DENS')} ${state.density.toFixed(2)}`);
+  const pd = planeDesc();
+  let bl = state.planeMode === 0 ? `${k('PLANE')} OFF` :
+    `${k('PLANE')} <span class="a">${state.planeMode === 1 ? 'CUT' : 'SLICE'} ${pd.orient}</span>\n` +
+    (pd.long ? pd.long + '\n' : '') +
+    `${k('POS')} ${pad(state.offset.toFixed(3), 6)}  ${k('AZ')} ${pad(state.theta, 4)}°  ${k('EL')} ${pad(state.phi, 3)}°`;
+  if (quad && volume) {
+    // Voxel value under the crosshair.
+    const [x, y, z] = [0, 1, 2].map(cursorIndex), o = ((z * volume.h + y) * volume.w + x) * 4, D = volume.data;
+    bl = `${k('CUR')} ${x},${y},${z}` + (small ? '\n' : '  ') +
+      `${k('RGB')} ${D[o]} ${D[o + 1]} ${D[o + 2]}  ${k('MOT')} ${(D[o + 3] / 255).toFixed(2)}\n` + bl;
+  }
+  setText($('cBL'), bl);
+  setText($('cBR'), `${k('ZOOM')} ${(fitDistance() / state.dist).toFixed(2)}×\n` +
+    `${k('YAW')} ${pad(((deg(state.yaw) % 360) + 540) % 360 - 180, 4)}°  ${k('PITCH')} ${pad(deg(state.pitch), 3)}°\n` +
+    `${k('STEPS')} ${state.steps}  ${k('RES')} ${Math.round(state.res * 100)}%`);
+  {   // Gizmo
+    const S = 92, dpr = devicePixelRatio || 1, R = 30, c = S / 2;
+    if (gizmo.width !== Math.round(S * dpr)) { gizmo.width = gizmo.height = Math.round(S * dpr); }
+    const g = gctx;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, S, S);
+    g.fillStyle = 'rgba(255,255,255,0.05)';
+    g.beginPath(); g.arc(c, c, S / 2 - 1, 0, 7); g.fill();
+    gizmoEnds = [];
+    for (const a of AXES) for (const sgn of [1, -1]) {
+      const v = a.v.map(x => x * sgn);
+      const dot = u => v[0] * u[0] + v[1] * u[1] + v[2] * u[2];
+      gizmoEnds.push({ ...a, v, pos: sgn > 0, x: c + dot(cam.right) * R, y: c - dot(cam.up) * R, z: dot(cam.fwd) });
+    }
+    gizmoEnds.sort((p, q) => q.z - p.z);          // far ends first
+    for (const e of gizmoEnds) {
+      if (e.pos) {
+        g.strokeStyle = e.c; g.lineWidth = 2;
+        g.beginPath(); g.moveTo(c, c); g.lineTo(e.x, e.y); g.stroke();
+        g.fillStyle = e.c; g.beginPath(); g.arc(e.x, e.y, 8, 0, 7); g.fill();
+        g.fillStyle = '#111'; g.font = '600 10px ' + MONO;
+        g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(e.l, e.x, e.y + 0.5);
+      } else {
+        g.fillStyle = e.c + '55'; g.strokeStyle = e.c; g.lineWidth = 1.2;
+        g.beginPath(); g.arc(e.x, e.y, 6.5, 0, 7); g.fill(); g.stroke();
+      }
+    }
+  }
+}
+// Click a gizmo end to look down that axis toward the volume.
+function viewAlong(v) {
+  state.pitch = Math.max(-1.55, Math.min(1.55, Math.asin(v[1])));
+  if (Math.hypot(v[0], v[2]) > 1e-3) state.yaw = Math.atan2(v[0], v[2]);
+  requestRender();
+}
+gizmo.addEventListener('pointerdown', e => {
+  const r = gizmo.getBoundingClientRect(), sc = 92 / r.width, x = (e.clientX - r.left) * sc, y = (e.clientY - r.top) * sc;
+  let best = null, bd = 12;
+  for (const g of gizmoEnds) { const d = Math.hypot(g.x - x, g.y - y); if (d <= bd) { best = g; bd = d; } }   // nearer ends come later
+  if (best) viewAlong(best.v);
+  else if (Math.hypot(x - 46, y - 46) < 14) $('resetView').click();
+});
 
 // ---------------------------------------------------------------- volume building
 // Alpha channel = per-voxel motion: max channel difference from the per-pixel temporal median.
@@ -719,6 +1149,7 @@ function updateSrcLabels() {
   $('mem').textContent = `${w}×${h}×${d} · ${(bytes / 1048576).toFixed(1)} MB · ${fps.toFixed(1)} samples/s` + (over ? ' · too large for this device' : '');
   $('mem').classList.toggle('warn', over);
   $('build').disabled = over || !(t1 > t0) || !vid.duration;
+  for (const id of ['t0', 't1', 'frames', 'width']) syncFill($(id));
 }
 
 function seekTo(t) {
@@ -754,6 +1185,15 @@ $('demo').onclick = () => { $('srcSec').hidden = true; loadDemo(); };
 
 // ---------------------------------------------------------------- UI bindings
 function setStatus(s) { $('status').textContent = s; }
+function updateKeys() {
+  const b = s => `<b>${s}</b>`, quad = state.layout !== 0;
+  const html = coarse
+    ? (quad ? `${b('Drag')} crosshair · ${b('2 fingers')} step · ${b('2× tap')} max`
+            : `${b('Drag')} orbit · ${b('Pinch')} zoom · ${b('Gizmo')} views · ${b('2× tap')} max`)
+    : (quad ? `${b('Click/drag')} crosshair · ${b('Wheel')} step slice · ${b('Double-click')} maximize · ${b('N')} properties`
+            : `${b('Drag')} orbit · ${b('Wheel')} zoom · ${b('1 3 7')} views · ${b('Home')} reset · ${b('N')} properties`);
+  if ($('keys').innerHTML !== html) $('keys').innerHTML = html;
+}
 const fmt = {
   density: v => v < 1 ? v.toFixed(2) : v.toFixed(1), steps: v => v | 0, res: v => Math.round(v * 100) + '%',
   theta: v => v + '°', phi: v => v + '°', depthScale: v => v.toFixed(2) + '×', bright: v => v.toFixed(2) + '×',
@@ -770,16 +1210,30 @@ function updateLabels() {
     const k = el.dataset.key, v = state[k];
     el.nextElementSibling.textContent = fmt[k] ? fmt[k](v) : (+v).toFixed(2);
   }
-  // Describe the plane position in video terms for axis-aligned planes.
-  const n = planeNormal(), frac = (state.offset + 1) / 2, out = $('offsetOut');
-  if (!volume) return;
+  const pd = planeDesc();
+  if (pd.short) $('offsetOut').textContent = pd.short;
+  for (const el of document.querySelectorAll('input[type=range]')) syncFill(el);
+}
+function syncFill(el) { el.style.setProperty('--p', (el.value - el.min) / (el.max - el.min) * 100 + '%'); }
+// Describe the plane position in video terms for axis-aligned planes.
+function planeDesc() {
+  const n = planeNormal(), frac = (state.offset + 1) / 2;
   if (n[2] < -0.9999) {
-    out.textContent = (volume.t0 + frac * (volume.t1 - volume.t0)).toFixed(2) + 's';
-  } else if (n[1] < -0.9999) {
-    out.textContent = 'row ' + Math.round(frac * (volume.h - 1));
-  } else if (n[0] < -0.9999) {
-    out.textContent = 'col ' + Math.round((1 - frac) * (volume.w - 1));
+    if (!volume) return { orient: 'XY' };
+    const t = (volume.t0 + frac * (volume.t1 - volume.t0)).toFixed(2) + 's';
+    return { orient: 'XY', short: t, long: `<span class="k">FR</span> ${Math.round(frac * (volume.d - 1)) + 1}/${volume.d}  <span class="k">t</span> ${t}` };
   }
+  if (n[1] < -0.9999) {
+    if (!volume) return { orient: 'XT' };
+    const r = Math.round(frac * (volume.h - 1));
+    return { orient: 'XT', short: 'row ' + r, long: `<span class="k">ROW</span> ${r + 1}/${volume.h}` };
+  }
+  if (n[0] < -0.9999) {
+    if (!volume) return { orient: 'YT' };
+    const c = Math.round((1 - frac) * (volume.w - 1));
+    return { orient: 'YT', short: 'col ' + c, long: `<span class="k">COL</span> ${c + 1}/${volume.w}` };
+  }
+  return { orient: 'OBLIQUE' };
 }
 for (const el of ranges) {
   el.value = el.hasAttribute('data-log') ? Math.log10(state[el.dataset.key]) : state[el.dataset.key];
@@ -791,6 +1245,7 @@ for (const el of ranges) {
   });
 }
 function syncSegs() {
+  updateKeys();
   $('jelloSec').hidden = state.mode !== 2;
   for (const seg of document.querySelectorAll('.seg'))
     for (const b of seg.children) b.classList.toggle('on', +b.dataset.v === state[seg.dataset.key]);
@@ -800,6 +1255,7 @@ for (const seg of document.querySelectorAll('.seg')) {
     const b = e.target.closest('button'); if (!b) return;
     const prev = state[seg.dataset.key];
     state[seg.dataset.key] = +b.dataset.v;
+    if (seg.dataset.key === 'drag' && state.drag === 1 && state.planeMode === 0) state.planeMode = 1;
     syncSegs(); requestRender();
     if (seg.dataset.key === 'mode' && state.mode === 2 && prev !== 2) kick([1, 0.6, -5, 0.8]);   // plop
   });
@@ -822,18 +1278,21 @@ $('sweep').onclick = () => {
 $('wobble').onclick = () => kick([(Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8, -3, (Math.random() - 0.5) * 4]);
 $('resetView').onclick = () => { state.yaw = 0.65; state.pitch = 0.38; state.dist = fitDistance(); requestRender(); };
 $('togglePanel').onclick = () => { $('panel').classList.toggle('hidden'); };
+// Blender-ish shortcuts: 1 front (first frame), 3 side, 7 top, Ctrl+key for the opposite side, Home reset, N panel.
+addEventListener('keydown', e => {
+  if (e.metaKey || e.altKey || e.target.tagName === 'VIDEO') return;
+  const opp = e.ctrlKey ? -1 : 1;
+  const views = { Digit1: [0, 0, 1], Numpad1: [0, 0, 1], Digit3: [1, 0, 0], Numpad3: [1, 0, 0], Digit7: [0, 1, 0], Numpad7: [0, 1, 0] };
+  if (views[e.code]) { viewAlong(views[e.code].map(x => x * opp)); e.preventDefault(); }
+  else if (e.ctrlKey) return;
+  else if (e.code === 'Home') $('resetView').click();
+  else if (e.code === 'KeyN') $('togglePanel').click();
+});
 $('panel').addEventListener('transitionend', () => { state.dist = fitDistance(); requestRender(); });
-let dragPlane = false;
-$('dragMode').onclick = () => {
-  dragPlane = !dragPlane;
-  $('dragMode').classList.toggle('on', dragPlane);
-  $('dragMode').textContent = dragPlane ? 'Drag: plane' : 'Drag: orbit';
-  if (dragPlane && state.planeMode === 0) { state.planeMode = 1; syncSegs(); requestRender(); }
-};
 
 // ---------------------------------------------------------------- gestures
 const pointers = new Map();
-let pinchDist = 0, tap = null;
+let pinchDist = 0, tap = null, lastTap = null, dragPane = null, wheelAcc = 0, curBefore = null;
 function bumpInteract() {
   interacting = true;
   clearTimeout(interactTimer);
@@ -841,19 +1300,59 @@ function bumpInteract() {
   requestRender();
 }
 function pinchSpan() { const [a, b] = [...pointers.values()]; return Math.hypot(a.x - b.x, a.y - b.y); }
+// Click or drag in a slice view: move the crosshair there.
+function setCursorAt(p, x, y) {
+  const S = SLICE[p.kind], r = imgRect(p);
+  state.cur[S.h] = clamp01((x - r.x) / r.w);
+  state.cur[S.v] = clamp01((y - r.y) / r.h);
+  bumpInteract();
+}
+// Scroll or two-finger drag in a slice view: step through slices, one voxel per `unit` of movement.
+function stepSlice(p, delta, unit) {
+  const S = SLICE[p.kind], n = volDims()[S.fixed];
+  wheelAcc += delta;
+  const steps = Math.trunc(wheelAcc / unit);
+  if (!steps) return;
+  wheelAcc -= steps * unit;
+  state.cur[S.fixed] = clamp01((cursorIndex(S.fixed) + steps) / (n - 1));
+  bumpInteract();
+}
+// Double-click a pane to maximize it; double-click again to return to 2×2.
+function toggleMaximize(p) {
+  state.layout = state.layout === 1 ? { '3d': 0, xy: 2, xt: 3, yt: 4 }[p.kind] : 1;
+  syncSegs(); requestRender();
+}
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (pointers.size === 2) pinchDist = pinchSpan();
   tap = pointers.size === 1 ? { t: performance.now(), moved: 0 } : null;
+  if (pointers.size === 1) {
+    dragPane = paneAt(e.clientX, e.clientY) || null;
+    curBefore = state.cur.slice();
+    if (dragPane && dragPane.kind !== '3d') setCursorAt(dragPane, e.clientX, e.clientY);
+  } else {
+    // A second finger turns the touch into slice stepping: undo the crosshair move from the first finger.
+    wheelAcc = 0;
+    if (dragPane && dragPane.kind !== '3d' && curBefore) {
+      const S = SLICE[dragPane.kind];
+      state.cur[S.h] = curBefore[S.h]; state.cur[S.v] = curBefore[S.v];
+      requestRender();
+    }
+  }
 });
 canvas.addEventListener('pointermove', e => {
   const p = pointers.get(e.pointerId); if (!p) return;
   const dx = e.clientX - p.x, dy = e.clientY - p.y;
   p.x = e.clientX; p.y = e.clientY;
   if (tap) tap.moved += Math.abs(dx) + Math.abs(dy);
+  if (dragPane && dragPane.kind !== '3d') {
+    if (pointers.size === 1) setCursorAt(dragPane, e.clientX, e.clientY);
+    else if (pointers.size === 2) stepSlice(dragPane, dy / 2, 10);   // the two-finger centroid moves half as far
+    return;
+  }
   if (pointers.size === 1) {
-    if (dragPlane) {
+    if (state.drag === 1) {
       setValue('offset', Math.max(-1, Math.min(1, state.offset + (dy - dx) / Math.min(canvas.clientWidth, canvas.clientHeight) * 1.5)));
     } else {
       state.yaw -= dx * 0.008;
@@ -868,7 +1367,16 @@ canvas.addEventListener('pointermove', e => {
   bumpInteract();
 });
 canvas.addEventListener('pointerup', e => {
-  if (tap && pointers.size === 1 && tap.moved < 8 && performance.now() - tap.t < 350 && state.mode === 2) poke(e.clientX, e.clientY);
+  const now = performance.now();
+  if (tap && pointers.size === 1 && tap.moved < 8 && now - tap.t < 350) {
+    const p = paneAt(e.clientX, e.clientY);
+    if (lastTap && now - lastTap.t < 320 && Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < 24 && p) {
+      toggleMaximize(p); lastTap = null;
+    } else {
+      lastTap = { t: now, x: e.clientX, y: e.clientY };
+      if (p && p.kind === '3d' && state.mode === 2) poke(e.clientX, e.clientY);
+    }
+  }
   tap = null;
 });
 const endPointer = e => { pointers.delete(e.pointerId); pinchDist = pointers.size === 2 ? pinchSpan() : 0; };
@@ -876,6 +1384,8 @@ canvas.addEventListener('pointerup', endPointer);
 canvas.addEventListener('pointercancel', endPointer);
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
+  const p = paneAt(e.clientX, e.clientY);
+  if (p && p.kind !== '3d') { stepSlice(p, e.deltaMode ? e.deltaY * 40 : e.deltaY, 40); return; }
   state.dist = Math.max(0.3, Math.min(20, state.dist * Math.exp(e.deltaY * 0.0015)));
   bumpInteract();
 }, { passive: false });

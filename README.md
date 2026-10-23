@@ -24,12 +24,40 @@ phone on the same Wi‑Fi. A demo volume loads on start.
 2. Choose **Frames** (samples along time) and **Width** (pixels per frame),
    then tap **Build volume**. The memory estimate turns red if the volume is
    too large for the device.
-3. Drag to orbit and pinch or scroll to zoom.
+3. Drag to orbit and pinch or scroll to zoom. Click an end of the axis gizmo
+   (top right) to look along X, Y or T (time), or its centre to reset the view. On a keyboard, **1**, **3** and **7**
+   give the front, side and top views (add **Ctrl** for the opposite side),
+   **Home** resets the view and **N** toggles the properties panel.
+
+### Layout
+
+**2×2** in the top bar splits the view like a medical image viewer: the 3D
+view plus three slice views through a shared crosshair. **Frame (XY)** shows
+one frame, **Row (XT)** one row of pixels over time (time runs down), and
+**Column (YT)** one column over time (time runs right). Each view and its
+crosshair line take the colour of the axis the slice is normal to, the same
+colours as the gizmo, and the 3D view outlines all three slices.
+
+- Click or drag in a slice view to move the crosshair there. Scroll, or drag
+  with two fingers on a touch screen, to step through slices one voxel at a
+  time.
+- The rulers are in pixels and seconds.
+- Double-click (or double-tap) any view to maximize it, and again to go back.
+- With the 2×2 layout, the 3D view shows the colour and motion value of the
+  voxel under the crosshair (**CUR**, **RGB**, **MOT**).
+
+With **Time hue**, **Gray** or **Hot iron** colours, a legend shows the
+colour scale.
+
+The corners of the viewport show readouts like a medical image viewer: source
+and voxel dimensions, the render settings (**W**/**L** are the opacity
+softness and threshold), the plane's position (with the frame, row or column
+index for axis-aligned planes), and the zoom and camera angles.
 
 ### Render
 
-- **Volume** blends voxels front to back. **Max intensity** shows the
-  strongest voxel along each line of sight.
+- **Volume** blends voxels front to back. **MIP** (maximum intensity
+  projection) shows the strongest voxel along each line of sight.
 - **Jello** turns the volume into a block of gelatin on a plate. The video
   content is suspended inside, seen through a refracting, glossy, tinted gel.
   Tap the block to poke it, spin the view to make it twist, or tap **Wobble**.
@@ -44,7 +72,10 @@ phone on the same Wi‑Fi. A demo volume loads on start.
     moving objects become tubes through time.
   - **Bright** or **Dark**: based on luminance.
   - **Uniform**: everything at the same opacity.
-- **Time hue** colours voxels by time instead of using the video's colours.
+- **Colour map**: **Video** keeps the video's colours, **Time hue** colours
+  voxels by time, and **Gray** and **Hot iron** map luminance through a
+  grayscale or black–red–yellow–white ramp. The map applies to the slice face
+  too.
 - **Threshold**, **Softness** and **Density** shape opacity. **Time length**
   stretches the time axis. **Quality** and **Resolution** trade detail for
   speed.
@@ -57,8 +88,9 @@ phone on the same Wi‑Fi. A demo volume loads on start.
 - The presets give a single frame (**XY**), one row over time (**XT**) or one
   column over time (**YT**). **Azimuth** and **Elevation** tilt the plane
   freely.
-- **Sweep plane** animates the plane through the volume. **Drag: plane** in the
-  top bar makes dragging on the view move the plane instead of orbiting.
+- **Sweep plane** animates the plane through the volume. Switching the top bar
+  from **Orbit** to **Slice** makes dragging on the view move the plane instead
+  of orbiting.
 
 ## Limitations
 
